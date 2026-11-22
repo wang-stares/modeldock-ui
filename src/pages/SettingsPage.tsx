@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, ChevronDown, ChevronRight, Compass, Cpu, ExternalLink, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
 import { api } from '../api'
-import { releaseHistory } from '../data/releaseHistory'
+import { releaseHistory, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
 import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState } from '../types'
 import { BrandMark } from '../components/BrandMark'
@@ -45,7 +45,7 @@ const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; des
   updates: {
     eyebrow: 'Release notes',
     title: '更新公告',
-    description: '收录 v1.0.0 起的全部版本；当前版本汇总现有功能；只读，随安装包发布。',
+    description: '收录 v1.0.0 起每个版本的完整公告。当前版本置顶，历史版本按主版本分组，展开版本即可看到当时的全部条目；只读，随安装包发布。',
   },
 }
 
@@ -508,78 +508,154 @@ function AboutSettings({ onReplayTour }: { onReplayTour: () => void }) {
   )
 }
 
+function releaseCount(item: ReleaseHistoryItem) {
+  return item.sections.reduce((sum, section) => sum + section.items.length, 0)
+}
+
+function sectionTone(title: string) {
+  if (title === '新增') return 'new'
+  if (title === '变更') return 'change'
+  if (title === '修复') return 'fix'
+  if (title === '优化') return 'opt'
+  return 'other'
+}
+
+function ReleaseSections({ sections }: { sections: ReleaseNoteSection[] }) {
+  if (sections.length === 0) {
+    return <p className="release-empty">这一版没有留下可读条目。</p>
+  }
+  return (
+    <div className="release-sections">
+      {sections.map((section, sectionIndex) => (
+        <section className="release-section" key={`${section.title}-${sectionIndex}`}>
+          <div className="release-section-head">
+            <span className={`release-kind ${sectionTone(section.title)}`}>{section.title}</span>
+            <span className="release-section-count">{section.items.length} 条</span>
+          </div>
+          <ul className="release-items">
+            {section.items.map((item, itemIndex) => (
+              <li key={`${item.title}-${itemIndex}`}>
+                {item.title && <strong>{item.title}</strong>}
+                {item.detail && <span>{item.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 function UpdateSettings() {
-  const historyCount = releaseHistory.reduce((sum, group) => sum + group.items.length, 0)
+  const current = releaseHistory
+    .flatMap(group => group.items)
+    .find(item => item.version === APP_VERSION)
+  const older = releaseHistory
+    .map(group => ({ ...group, items: group.items.filter(item => item.version !== APP_VERSION) }))
+    .filter(group => group.items.length > 0)
+  const historyCount = older.reduce((sum, group) => sum + group.items.length, 0)
+  const currentCount = current ? releaseCount(current) : 0
 
   return (
     <>
-      <section className="settings-card settings-detail-card release-card">
-        <div className="release-head">
-          <div className="release-head-top">
+      <section className="settings-card release-current">
+        <div className="release-current-head">
+          <div className="release-current-top">
             <span className="release-latest"><Megaphone size={12} /> 当前版本</span>
-            <span className="release-date">2026-11-22 · 全功能版</span>
+            <span className="release-status">本地离线更新</span>
           </div>
           <div className="release-version">v{APP_VERSION}</div>
-          <h2 className="release-title">模型来源独立开关</h2>
-          <p className="release-summary">本次将模型来源改为四个独立开关：魔搭、魔搭国际、Hugging Face 与 OpenCSG 均可单独启用，关闭后立即退出搜索、推荐与下载。OpenCSG 开启后才展开 Access Token 配置；未配置时保留开关状态并标记为待配置。模型库来源数量改为读取实际可用来源。</p>
-        </div>
-
-        <div className="release-grid">
-          <div className="release-block">
-            <div className="release-block-title">模型与下载</div>
-            <ul className="release-list">
-              <li>四个模型来源独立开关，关闭来源不参与搜索与下载</li>
-              <li>推荐 / 全部目录，多源结果实时去重</li>
-              <li>断点续传、源站 SHA256 / 文件体积 / GGUF 结构校验</li>
-              <li>依据内存与显存评估本机运行条件</li>
-            </ul>
-          </div>
-          <div className="release-block">
-            <div className="release-block-title">推理与对话</div>
-            <ul className="release-list">
-              <li>优先复用 Ollama，内置 llama.cpp 作为回退</li>
-              <li>GGUF 模型加载、CPU 推理与模型切换</li>
-              <li>流式输出、会话持久化与启动握手</li>
-            </ul>
-          </div>
-          <div className="release-block">
-            <div className="release-block-title">外观与数据</div>
-            <ul className="release-list">
-              <li>启动页、六步上手指引与侧栏重播入口</li>
-              <li>Miuix 设计规范、浅色 / 深色 / 跟随系统</li>
-              <li>亚克力 / 云母 / 纯色材质与强调色</li>
-              <li>二级设置页、来源开关与 Token 存储边界</li>
-            </ul>
+          <div className="release-hero-title">{current?.title ?? '版本公告'}</div>
+          <div className="release-meta">
+            {current ? `${current.date} · 当前版本` : 'CHANGELOG.md 里没有当前版本公告'}
           </div>
         </div>
-
-        <div className="release-history">
-          <div className="release-history-head">
-            <span>历史版本</span>
-            <span className="release-history-count">v1.0.0 起 · {historyCount + 1} 个版本</span>
-          </div>
-          {releaseHistory.map(group => (
-            <details className="release-group" key={group.major}>
-              <summary className="release-group-summary">
-                <span className="release-group-label">{group.label}</span>
-                <span className="release-group-range">{group.range}</span>
-                <span className="release-group-count">{group.items.length} 个版本</span>
-                <ChevronDown className="release-group-chevron" size={16} aria-hidden />
-              </summary>
-              <div className="release-group-list">
-                {group.items.map(item => (
-                  <div className="release-history-item" key={item.version}>
-                    <span className="release-history-version">v{item.version}</span>
-                    <span className="release-history-date">{item.date}</span>
-                    <span className="release-history-copy">{item.title}</span>
-                  </div>
-                ))}
+        <div className="release-current-body">
+          {current ? (
+            <>
+              <div className="release-body-head">
+                <span className="release-body-label">本版更新</span>
+                <span className="release-body-count">{currentCount} 条 · {current.sections.length} 个分类</span>
               </div>
-            </details>
-          ))}
+              <ReleaseSections sections={current.sections} />
+              <details className="release-overview">
+                <summary className="release-overview-summary">
+                  <span className="release-overview-title">当前版本功能概览</span>
+                  <span className="release-overview-hint">当前版本已具备</span>
+                  <ChevronDown className="release-overview-chevron" size={15} aria-hidden />
+                </summary>
+                <div className="release-overview-grid">
+                  <div className="release-overview-block">
+                    <h4>模型与下载</h4>
+                    <ul>
+                      <li>魔搭 / 魔搭国际 / Hugging Face / OpenCSG 四个来源独立开关</li>
+                      <li>推荐与全部目录，多源结果实时去重</li>
+                      <li>断点续传，源站 SHA256、体积与 GGUF 结构校验</li>
+                      <li>按内存与显存评估本机运行条件</li>
+                    </ul>
+                  </div>
+                  <div className="release-overview-block">
+                    <h4>推理与对话</h4>
+                    <ul>
+                      <li>优先复用 Ollama，内置 llama.cpp 作为回退</li>
+                      <li>支持 Edge0 本机服务，GGUF 模型加载与切换</li>
+                      <li>流式输出、会话持久化与启动握手</li>
+                    </ul>
+                  </div>
+                  <div className="release-overview-block">
+                    <h4>外观与数据</h4>
+                    <ul>
+                      <li>启动页、六步上手指引与侧栏重播入口</li>
+                      <li>Miuix 设计规范，浅色 / 深色 / 跟随系统</li>
+                      <li>亚克力 / 云母 / 纯色材质与强调色</li>
+                      <li>访问凭据只保存在本机，不通过界面回传</li>
+                    </ul>
+                  </div>
+                </div>
+              </details>
+            </>
+          ) : (
+            <p className="release-empty">当前版本没有可展示的公告条目。</p>
+          )}
         </div>
       </section>
-      <p className="settings-note">此页只展示随安装包发布的更新公告，不联网检查更新；历史条目来自 CHANGELOG.md，后续每个版本都会补一行。</p>
+
+      <section className="settings-card release-history-card">
+        <div className="release-history-head">
+          <span>历史版本</span>
+          <span className="release-history-count">v1.0.0 起 · {historyCount} 个版本</span>
+        </div>
+        {older.map(group => (
+          <details className="release-group" key={group.major}>
+            <summary className="release-group-summary">
+              <span className="release-group-label">{group.label}</span>
+              <span className="release-group-range">{group.range}</span>
+              <span className="release-group-count">{group.items.length} 个版本</span>
+              <ChevronDown className="release-group-chevron" size={16} aria-hidden />
+            </summary>
+            <div className="release-group-list">
+              {group.items.map(item => (
+                <details className="release-past" key={item.version}>
+                  <summary className="release-past-summary">
+                    <span className="release-past-version">v{item.version}</span>
+                    <span className="release-past-date">{item.date}</span>
+                    <span className="release-past-title">{item.title}</span>
+                    <span className="release-past-count">{releaseCount(item)} 条</span>
+                    <ChevronDown className="release-past-chevron" size={15} aria-hidden />
+                  </summary>
+                  <div className="release-past-body">
+                    <ReleaseSections sections={item.sections} />
+                  </div>
+                </details>
+              ))}
+            </div>
+          </details>
+        ))}
+      </section>
+
+      <div className="settings-callout">
+        更新公告随安装包离线发布，不联网检查更新。运行新版本安装包覆盖安装即可；模型、会话与偏好保存在本机数据目录。
+      </div>
     </>
   )
 }
