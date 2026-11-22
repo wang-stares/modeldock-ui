@@ -21,6 +21,32 @@ export const releaseHistory: ReleaseHistoryGroup[] = [
     range: "2026-11-19 — 2026-11-23",
     items: [
       {
+        version: "3.11.0",
+        date: "2026-11-23",
+        title: "更新包签名",
+        sections: [
+          {
+            title: "新增",
+            items: [
+              { title: "更新包签名", detail: "每次发布额外生成 SHA256SUMS.txt.sig（ECDSA P-256），客户端用内置公钥验证；签名对不上就删包并拒绝自动升级，防止仓库被换包或镜像被投毒。" },
+              { title: "下载加速", detail: "安装包优先从公共 GitHub 加速源下载，源不可用或内容不对时自动回退官方地址；官方直连始终排在最后，保证任何情况下都能下。" },
+            ],
+          },
+          {
+            title: "变更",
+            items: [
+              { title: "校验顺序", detail: "先验签名、再用签名保护的哈希校验安装包；日志只记录主机名，不记录完整下载地址。" },
+            ],
+          },
+          {
+            title: "优化",
+            items: [
+              { title: "重试更省心", detail: "某个加速源中途断流会直接换下一个源接着下，已下载的部分继续走断点续传。" },
+            ],
+          },
+        ],
+      },
+      {
         version: "3.10.0",
         date: "2026-11-23",
         title: "退出即安装",
@@ -49,6 +75,7 @@ export const releaseHistory: ReleaseHistoryGroup[] = [
               { title: "省掉重复请求", detail: "检查时带上上次的 ETag / Last-Modified，内容没变时 GitHub 回 304，既不重新解析也不消耗匿名配额。" },
               { title: "失败才退避", detail: "自动下载失败后，同一版本 24 小时内不再自动重试；手动点下载与强制升级不受影响。" },
               { title: "安装包治理", detail: "只保留当前包和最近一版安装包，装成功后连同 ready 标记一起清理，不再让旧包一直占磁盘。" },
+              { title: "界面安全策略", detail: "生产构建的 CSP 从“不限制”改为白名单，只允许本地资源、本地内核接口与 Tauri IPC，去掉内联脚本执行。" },
             ],
           },
         ],

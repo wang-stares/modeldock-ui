@@ -121,6 +121,7 @@ export interface UpdateDownload {
   actualSha: string
   error: string
   version: string
+  signed?: boolean
 }
 
 /** 应用内升级前置结论：能不能装、装的是哪一版、还差什么条件。 */

@@ -176,6 +176,7 @@ export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, auto
             当前 v{check.currentVersion}
             {check.asset ? ` · 安装包 ${formatBytes(check.asset.size)}` : ''}
             {ready ? (autoInstallOnQuit ? ' · 重启或退出应用都会完成升级' : ' · 重启即可完成升级') : ''}
+            {ready && download?.signed ? ' · 已签名' : ''}
             {forced && !ready ? ' · 当前版本太低，这版发布后不再提供旧版支持' : ''}
           </div>
         </div>
