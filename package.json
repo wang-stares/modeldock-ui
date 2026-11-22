@@ -1,0 +1,27 @@
+{
+  "name": "modeldock-ui",
+  "private": true,
+  "version": "3.6.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 1420",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 1421"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.5",
+    "lucide-react": "^0.468.0",
+    "misans": "^5.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.2",
+    "vite": "^8.3.8"
+  },
+  "description": "天枢（ModelDock）桌面端前端：React + TypeScript + Vite"
+}

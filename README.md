@@ -1,0 +1,65 @@
+<p align="center">
+  <img src="src/assets/brand-mark.png" width="96" alt="天枢" />
+</p>
+
+<h1 align="center">天枢 · 前端</h1>
+
+<p align="center">
+  <strong>ModelDock UI</strong><br />
+  React 19 + TypeScript + Vite 的 Windows 桌面端界面
+</p>
+
+<p align="center">
+  <code>v3.6.0</code> · <code>MIT</code>
+</p>
+
+## 这是什么
+
+这是「天枢 / 星坞 StarDock」桌面应用的**前端界面**仓库。
+
+本仓库只包含界面层：页面、组件、样式、前端状态与本地交互。以下内容**不在本仓库**，也不提供源码：
+
+- 本地后端、模型目录服务、下载队列与完整性校验
+- 推理路由、模型加载、会话存储与 Agent 工具执行
+- 安装器、发布流水线、签名与构建产物
+
+前端通过 HTTP API 与本地后端通信；没有后端时界面可以启动，但模型库、对话、下载等功能会处于未连接或空状态。
+
+## 开发
+
+要求 Node.js 20+。
+
+```bash
+npm install
+npm run dev      # http://127.0.0.1:1420
+npm run build
+npm run preview
+```
+
+`npm run build` 只构建前端静态资源，不包含桌面壳、安装包或后端。
+
+## 目录
+
+```text
+src/
+  components/   通用界面组件
+  pages/        模型库、对话、下载中心、设置等页面
+  styles/       设计令牌与全局样式
+  data/         前端展示数据
+  api.ts        前端 HTTP 客户端
+  types.ts      前端类型定义
+```
+
+## 设计语言
+
+- 浅色底：`#F7F7F7`
+- 主色：`#3482FF`
+- 圆角：16px 为主
+- 字体：MiSans VF
+- 状态色与字阶统一由 `src/styles/global.css` 的设计令牌控制
+
+## 许可
+
+代码以 MIT 许可发布，见 [LICENSE](LICENSE)。
+
+「天枢」「星坞 StarDock」「ModelDock」名称、图标与品牌视觉不在 MIT 许可范围内；如需再分发产品或使用品牌标识，请先获得授权。

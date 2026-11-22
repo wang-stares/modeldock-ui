@@ -1,0 +1,50 @@
+/* 透明材质覆盖层：同时服务原生 Mica 与 Acrylic，不动纯色。
+   3.1.5 的画布/导航/卡片接近不透明，材质只剩不到两成壁纸；
+   这里压低遮罩，并移除 WebView2 在透明窗口里的二次 backdrop-filter。
+   3.1.10：亚克力单独再降一档后，浅色次级文字在深色壁纸上对比不足；
+   把浅色画布从 .36 抬到 .46、导航从 .48 抬到 .52，并压暗次级文字。
+   卡片维持 .64 的薄磨砂，壁纸纹理仍从卡片透出；云母与纯色不变。 */
+:root:is([data-material="mica"], [data-material="acrylic"]) {
+  --canvas: rgba(247, 247, 247, 0.42);
+  --rail: rgba(255, 255, 255, 0.54);
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-raised: rgba(255, 255, 255, 0.88);
+  --surface-soft: rgba(240, 240, 240, 0.38);
+  --surface-hover: rgba(232, 232, 232, 0.58);
+}
+[data-theme="dark"]:is([data-material="mica"], [data-material="acrylic"]) {
+  --canvas: rgba(36, 36, 36, 0.52);
+  --rail: rgba(36, 36, 36, 0.58);
+  --surface: rgba(45, 45, 45, 0.72);
+  --surface-raised: rgba(45, 45, 45, 0.86);
+  --surface-soft: rgba(255, 255, 255, 0.08);
+  --surface-hover: rgba(255, 255, 255, 0.12);
+}
+/* 亚克力比云母多透一点：云母只是系统色调，亚克力本身已有壁纸模糊，
+   CSS 再留一层薄遮罩，既保住正文对比度，也让卡片不再像实心白块。 */
+:root[data-material="acrylic"] {
+  --canvas: rgba(247, 247, 247, 0.46);
+  --rail: rgba(255, 255, 255, 0.52);
+  --surface: rgba(255, 255, 255, 0.64);
+  --surface-raised: rgba(255, 255, 255, 0.82);
+  --surface-soft: rgba(240, 240, 240, 0.34);
+  --surface-hover: rgba(232, 232, 232, 0.54);
+}
+[data-theme="dark"][data-material="acrylic"] {
+  --canvas: rgba(36, 36, 36, 0.46);
+  --rail: rgba(36, 36, 36, 0.52);
+  --surface: rgba(45, 45, 45, 0.64);
+  --surface-raised: rgba(45, 45, 45, 0.82);
+  --surface-soft: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.10);
+}
+html, body, #root { background: transparent; }
+:is([data-material="mica"], [data-material="acrylic"]) .app,
+:is([data-material="mica"], [data-material="acrylic"]) .rail,
+:is([data-material="mica"], [data-material="acrylic"]) .chat-panel,
+:is([data-material="mica"], [data-material="acrylic"]) .popover { backdrop-filter: none; }
+:is([data-material="mica"], [data-material="acrylic"]) .ambient i { opacity: .18; }
+[data-theme="dark"]:is([data-material="mica"], [data-material="acrylic"]) .ambient i { opacity: .12; }
+/* 亚克力下让壁纸自己的颜色说话，蓝光只留一点空气感。 */
+[data-material="acrylic"] .ambient i { opacity: .10; }
+[data-theme="dark"][data-material="acrylic"] .ambient i { opacity: .08; }
