@@ -87,7 +87,7 @@ export interface ChatResult { text: string; completed: boolean; cancelled: boole
 
 export type BackendChoice = 'auto' | 'embedded' | 'ollama' | 'edge0'
 
-export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean }
+export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean; autoDownloadUpdate: boolean; autoInstallOnQuit: boolean; updateChannel: 'stable' | 'beta' }
 
 export interface UpdateAssetInfo { name: string; size: number; url: string }
 
@@ -103,9 +103,12 @@ export interface UpdateCheck {
   checksumsUrl: string | null
   checkedAt: string
   error: string
+  channel?: 'stable' | 'beta'
+  forced?: boolean
+  rolloutPercent?: number
 }
 
-export type UpdateDownloadState = 'idle' | 'downloading' | 'verifying' | 'ready' | 'failed'
+export type UpdateDownloadState = 'idle' | 'downloading' | 'paused' | 'verifying' | 'ready' | 'failed'
 
 export interface UpdateDownload {
   state: UpdateDownloadState
@@ -117,6 +120,24 @@ export interface UpdateDownload {
   expectedSha: string
   actualSha: string
   error: string
+  version: string
+}
+
+/** 应用内升级前置结论：能不能装、装的是哪一版、还差什么条件。 */
+export interface UpdateInstallPrep {
+  canInstall: boolean
+  kind: 'installer' | 'portable' | 'dev'
+  installerPath: string
+  expectedSha: string
+  version: string
+  requiresElevation: boolean
+  blockingReasons: string[]
+  error: string
+}
+
+export interface UpdateInstallResult {
+  version: string
+  startedAt: number
 }
 
 export interface Edge0Settings { endpoint: string; modelAlias: string; modelDirectory: string }

@@ -1,4 +1,4 @@
-import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload } from './types'
+import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -76,10 +76,32 @@ export const api = {
     request<ModelSourcesState>(`/api/sources/${id}`, { method: 'PUT', body: JSON.stringify(update) }),
   checkUpdate: (force = false) => request<UpdateCheck>(`/api/update/check${force ? '?force=true' : ''}`),
   updateDownload: () => request<UpdateDownload>('/api/update/download'),
+  updateDiagnostics: () => request<{ channel: string; logPath: string; text: string }>('/api/update/diagnostics'),
   startUpdateDownload: () => request<UpdateDownload>('/api/update/download', { method: 'POST' }),
   cancelUpdateDownload: () => request<UpdateDownload>('/api/update/download/cancel', { method: 'POST' }),
   launchUpdate: () => request<{ ok: boolean }>('/api/update/launch', { method: 'POST' }),
   revealUpdate: () => request<{ ok: boolean }>('/api/update/reveal', { method: 'POST' }),
+  updateInstallPrep: () => request<UpdateInstallPrep>('/api/update/install-prep'),
+  pauseUpdateDownload: () => request<UpdateDownload>('/api/update/download/pause', { method: 'POST' }),
+}
+
+function isTauriRuntime() {
+  return typeof window !== 'undefined' &&
+    Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+}
+
+/** 退出并安装必须由桌面壳执行：先停本地内核，再拉起安装器，最后退出自身。 */
+export async function installUpdate(path: string, expectedSha: string, version: string): Promise<void> {
+  if (!isTauriRuntime()) throw new Error('当前不在天枢客户端内，无法执行应用内升级。')
+  const core = await import('@tauri-apps/api/core')
+  await core.invoke('install_update', { path, expectedSha, version })
+}
+
+/** 启动时读一次安装锁：返回非空表示上次升级没装完，版本已经对不上。 */
+export async function takeInstallResult(): Promise<UpdateInstallResult | null> {
+  if (!isTauriRuntime()) return null
+  const core = await import('@tauri-apps/api/core')
+  return core.invoke<UpdateInstallResult | null>('take_install_result')
 }
 
 export async function streamChat(

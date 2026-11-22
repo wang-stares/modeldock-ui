@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { initApi, api } from './api'
+import { initApi, api, takeInstallResult } from './api'
 import { TitleBar } from './components/TitleBar'
 import { Rail } from './components/Rail'
 import { SplashScreen } from './components/SplashScreen'
@@ -13,7 +13,7 @@ import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type { AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable' }
 
 function loadSettings(): AppSettings {
   try {
@@ -138,12 +138,45 @@ export function App() {
         if (!alive || !check.available || !check.latestVersion) return
         let skipped = ''
         try { skipped = localStorage.getItem('stardock.update.skipped') ?? '' } catch { /* 隐私模式忽略 */ }
-        if (skipped === check.latestVersion) return
+        if (skipped === check.latestVersion && !check.forced) return
         setUpdateCheck(check)
       }).catch(() => { /* 离线或接口限流时不提示 */ })
     }, 1600)
     return () => { alive = false; window.clearTimeout(timer) }
   }, [ready, settings.autoCheckUpdate])
+
+  // 上次升级是否落地：版本对上静默清锁，对不上就提示“没装完”，避免用户以为已经升过。
+  useEffect(() => {
+    if (!ready) return
+    let alive = true
+    void takeInstallResult().then(result => {
+      if (!alive || !result) return
+      toast(`上次升级到 v${result.version} 没有完成，可在「设置 → 版本更新」重试`)
+    }).catch(() => { /* 浏览器预览或读锁失败时静默 */ })
+    return () => { alive = false }
+  }, [ready])
+
+  // 默认在应用运行时就把安装包下好：发现新版本 → 后台下载 → 校验完成后再提示“重启即可”。
+  useEffect(() => {
+    if (!ready || !updateCheck?.available) return
+    if (!settings.autoCheckUpdate || !settings.autoDownloadUpdate) return
+    const version = updateCheck.latestVersion ?? ''
+    let failed: { version?: string; at?: number } = {}
+    try { failed = JSON.parse(localStorage.getItem('stardock.update.failed') ?? '{}') } catch { /* 隐私模式忽略 */ }
+    // 同一版本失败过就退避 24 小时：避免每次开窗都重试几十兆下载；手动点下载不受影响。
+    if (!updateCheck.forced && failed.version === version && typeof failed.at === 'number' && Date.now() - failed.at < 24 * 3600_000) return
+    const markFailed = () => {
+      try { localStorage.setItem('stardock.update.failed', JSON.stringify({ version, at: Date.now() })) } catch { /* 忽略 */ }
+    }
+    let alive = true
+    void api.updateDownload().then(state => {
+      if (!alive) return
+      if (state.state !== 'idle' && state.state !== 'failed') return
+      if (state.state === 'failed') markFailed()
+      return api.startUpdateDownload().then(() => { /* 进度由横幅轮询 */ })
+    }).catch(() => { markFailed() })
+    return () => { alive = false }
+  }, [ready, updateCheck, settings.autoCheckUpdate, settings.autoDownloadUpdate])
 
   useEffect(() => {
     if (!ready || !splashDone || hasSeenOnboarding()) return
@@ -209,6 +242,8 @@ export function App() {
           onDismiss={() => dismissUpdate(updateCheck)}
           onOpenSettings={openUpdateSettings}
           onMessage={toast}
+          autoInstallOnQuit={settings.autoInstallOnQuit}
+          forced={updateCheck.forced === true}
         />
       )}
       {ready && splashDone && tourOpen && (

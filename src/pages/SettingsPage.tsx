@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowLeft, Check, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
 import { api } from '../api'
 import { releaseHistory, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
@@ -41,7 +41,7 @@ const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; des
   update: {
     eyebrow: 'Version check',
     title: '版本更新',
-    description: '每次打开应用时可自动检查公开仓库的最新 Release；发现新版本后直接下载安装包，并用 SHA256SUMS.txt 校验后再交给系统安装。',
+    description: '打开应用时检查公开仓库的最新 Release；发现新版本就在后台下载并校验，下好后点一次「重启并升级」，应用退出、覆盖安装并自动回到新版。',
   },
   about: {
     eyebrow: 'About',
@@ -495,8 +495,10 @@ function VersionUpdateSettings({ settings, onChange }: {
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const { download, busy, start, cancel, launch, reveal, percent } = useUpdateDownload(setNotice)
+  const { download, busy, installing, start, pause, install, launch, reveal, percent } = useUpdateDownload(setNotice)
+  const [confirming, setConfirming] = useState(false)
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
+  const paused = download?.state === 'paused'
   const ready = download?.state === 'ready'
 
   useEffect(() => {
@@ -533,6 +535,20 @@ function VersionUpdateSettings({ settings, onChange }: {
       .catch(() => { window.open(url, '_blank', 'noreferrer') })
   }
 
+  async function copyDiagnostics() {
+    setError('')
+    setNotice('')
+    try {
+      const payload = await api.updateDiagnostics()
+      const text = payload.text?.trim()
+      if (!text) { setNotice('还没有更新记录：触发一次检查后再来复制。'); return }
+      await navigator.clipboard.writeText(`${payload.channel}\n${payload.logPath}\n\n${text}`)
+      setNotice('更新日志已复制到剪贴板。')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '读取更新日志失败')
+    }
+  }
+
   return (
     <>
       <section className="settings-card settings-detail-card">
@@ -550,6 +566,61 @@ function VersionUpdateSettings({ settings, onChange }: {
             onClick={() => onChange({ autoCheckUpdate: !settings.autoCheckUpdate })}
           >
             <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">更新通道</div>
+            <div className="setting-desc">正式版只收稳定发布；测试版会提前收到 vX.Y.Z-beta.N 的预发布，可能不稳定，只建议愿意帮忙验证时开启。</div>
+          </div>
+          <div className="segmented" role="group" aria-label="更新通道">
+            <button type="button" className={settings.updateChannel === 'stable' ? 'active' : ''} onClick={() => onChange({ updateChannel: 'stable' })}>正式版</button>
+            <button type="button" className={settings.updateChannel === 'beta' ? 'active' : ''} onClick={() => onChange({ updateChannel: 'beta' })}>测试版</button>
+          </div>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">发现新版本时自动下载</div>
+            <div className="setting-desc">默认开启：在应用运行时就把安装包下好并校验，你只需要在方便的时候重启完成升级；关闭后改为手动点“下载”。</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.autoDownloadUpdate}
+            aria-label="发现新版本时自动下载"
+            className={`source-switch ${settings.autoDownloadUpdate ? 'on' : ''}`}
+            onClick={() => onChange({ autoDownloadUpdate: !settings.autoDownloadUpdate })}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">退出应用时自动安装</div>
+            <div className="setting-desc">默认开启：安装包已下好并校验通过时，从托盘菜单“退出”会先装完再退出，下次打开就是新版；关闭后只在点“重启并升级”时安装。</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.autoInstallOnQuit}
+            aria-label="退出应用时自动安装"
+            className={`source-switch ${settings.autoInstallOnQuit ? 'on' : ''}`}
+            onClick={() => onChange({ autoInstallOnQuit: !settings.autoInstallOnQuit })}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">更新诊断</div>
+            <div className="setting-desc">复制最近的检查、下载与安装记录；日志只写版本与状态，下载地址只保留域名。</div>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={() => void copyDiagnostics()}>
+            <FileText aria-hidden />复制日志
           </button>
         </div>
 
@@ -618,13 +689,20 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="update-asset-actions">
               {ready ? (
                 <>
-                  <button type="button" className="btn primary sm" onClick={() => void launch()}>
-                    <Check aria-hidden />打开安装包
+                  <button type="button" className="btn primary sm" disabled={busy} onClick={() => setConfirming(true)}>
+                    <Check aria-hidden />重启并升级
+                  </button>
+                  <button type="button" className="btn ghost sm" onClick={() => void launch()}>
+                    手动打开安装包
                   </button>
                   <button type="button" className="btn ghost sm" onClick={() => void reveal()}>
                     <FolderOpen aria-hidden />打开文件夹
                   </button>
                 </>
+              ) : paused ? (
+                <button type="button" className="btn primary sm" disabled={busy} onClick={() => void start()}>
+                  <Download aria-hidden />继续下载
+                </button>
               ) : (
                 <>
                   <button
@@ -633,10 +711,10 @@ function VersionUpdateSettings({ settings, onChange }: {
                     disabled={busy || downloading || !check.asset}
                     onClick={() => void start()}
                   >
-                    <Download aria-hidden />{downloading ? '下载中…' : '一键下载'}
+                    <Download aria-hidden />{downloading ? '下载中…' : download?.state === 'failed' ? '重新下载' : '开始下载'}
                   </button>
                   {downloading && (
-                    <button type="button" className="btn ghost sm" onClick={() => void cancel()}>取消</button>
+                    <button type="button" className="btn ghost sm" onClick={() => void pause()}>暂停</button>
                   )}
                 </>
               )}
@@ -658,7 +736,27 @@ function VersionUpdateSettings({ settings, onChange }: {
 
           {ready && download && !download.verified && (
             <div className="settings-callout">
-              这一版没有取到 SHA256SUMS.txt 校验值，安装包不会被自动打开；请在下载目录自行确认后再运行。
+              这一版没有取到 SHA256SUMS.txt 校验值，不会执行应用内升级；请在下载目录自行确认后再运行。
+            </div>
+          )}
+
+          {installing && (
+            <div className="settings-callout">
+              正在安装 v{download?.version}。系统弹出权限确认时请选择“是”；确认后应用会自动关闭，装完再自动打开。如果权限确认被拒绝，升级会取消，当前版本可以继续使用。
+            </div>
+          )}
+
+          {confirming && !installing && (
+            <div className="update-confirm">
+              <div className="update-confirm-text">
+                升级会关闭当前窗口，并中断正在进行的模型下载（升级后可断点续传）。安装过程会弹一次系统权限确认。
+              </div>
+              <div className="update-confirm-actions">
+                <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install()}>
+                  <Check aria-hidden />确认重启
+                </button>
+                <button type="button" className="btn ghost sm" onClick={() => setConfirming(false)}>再等等</button>
+              </div>
             </div>
           )}
 
@@ -682,7 +780,7 @@ function VersionUpdateSettings({ settings, onChange }: {
 
       <div className="settings-callout">
         版本检查只请求公开仓库 <strong>modeldock-ui</strong> 的 Release 接口；不带令牌、不上报设备信息。安装包下载到
-        %APPDATA%\ModelDock\updates，校验通过后才允许从应用内打开。自动检查默认开启，可在此页关闭。
+        %APPDATA%\ModelDock\updates，校验通过后才会执行应用内安装。自动检查与自动下载默认开启，可在此页关闭。绿色包（免安装版）不支持应用内升级。
       </div>
     </>
   )
