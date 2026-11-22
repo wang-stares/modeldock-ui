@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <code>v3.7.0</code> · <code>MIT</code>
+  <code>v3.8.0</code> · <code>MIT</code>
 </p>
 
 <p align="center">
@@ -25,19 +25,19 @@
 
 Windows 安装包与免安装压缩包见 **[Releases](https://github.com/wang-stares/modeldock-ui/releases/latest)**。
 
-- `Tianshu-Setup-3.7.0-x64.exe`：安装版
-- `Tianshu-3.7.0-win64.zip`：免安装版，解压后双击 `Tianshu.exe`
+- `Tianshu-Setup-3.8.0-x64.exe`：安装版
+- `Tianshu-3.8.0-win64.zip`：免安装版，解压后双击 `Tianshu.exe`
 - `SHA256SUMS.txt`：下载校验
 
 Releases 中的二进制是完整应用构建产物，**不包含源码**；后端、推理、下载、Agent 工具、安装器与发布流水线源码仍不公开。
 
-> 历史版本：1.0.0 → 3.7.0 共 94 个版本已镜像到 Releases。1.0.0 / 1.0.1 是规则里程碑，只有版本记录，不含应用安装包；从 1.1.0 起提供 Windows 应用包。
+> 历史版本：1.0.0 → 3.8.0 共 95 个版本已镜像到 Releases。1.0.0 / 1.0.1 是规则里程碑，只有版本记录，不含应用安装包；从 1.1.0 起提供 Windows 应用包。
 
 > 历史版本的免安装 zip 已移除调试符号（`.pdb`）；下载校验以 Release 内的 `SHA256SUMS.txt` 为准。
 
-> 视频回顾的是 1.x 的演进；这里下载的是当前完整版 3.7.0。
+> 视频回顾的是 1.x 的演进；这里下载的是当前完整版 3.8.0。
 
-> 3.7.0 新增系统托盘：关闭主窗口收进 Windows 通知区域，左键恢复，右键菜单提供「显示主界面」「隐藏到托盘」「退出天枢」；再次启动只唤回已有窗口。
+> 3.8.0 新增版本检查：打开应用时读取公开仓库最新 Release，发现新版本在右上角提示；设置页新增「版本更新」分组，可开关自动检查、手动检查；一键下载安装包并按 `SHA256SUMS.txt` 校验通过后才允许打开安装向导。
 
 ## 这是什么
 

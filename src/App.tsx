@@ -5,14 +5,15 @@ import { Rail } from './components/Rail'
 import { SplashScreen } from './components/SplashScreen'
 import type { LaunchPhase } from './components/SplashScreen'
 import { Onboarding } from './components/Onboarding'
+import { UpdateBanner } from './components/UpdatePanel'
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding'
 import { LibraryPage } from './pages/LibraryPage'
 import { ChatPage } from './pages/ChatPage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import type { AppSettings, DownloadJob, HardwareProfile, PageKey } from './types'
+import type { AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto' }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true }
 
 function loadSettings(): AppSettings {
   try {
@@ -42,6 +43,7 @@ export function App() {
   const [launchPhase, setLaunchPhase] = useState<LaunchPhase>('connect')
   const [splashDone, setSplashDone] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null)
   const toastTimer = useRef<number | null>(null)
 
   function toast(message: string) {
@@ -127,6 +129,22 @@ export function App() {
     return () => window.clearTimeout(timer)
   }, [settings, ready])
 
+  // 启动检查：等首屏稳定后再请求公开仓库，失败静默，不打断进入应用的流程。
+  useEffect(() => {
+    if (!ready || !settings.autoCheckUpdate) return
+    let alive = true
+    const timer = window.setTimeout(() => {
+      void api.checkUpdate().then(check => {
+        if (!alive || !check.available || !check.latestVersion) return
+        let skipped = ''
+        try { skipped = localStorage.getItem('stardock.update.skipped') ?? '' } catch { /* 隐私模式忽略 */ }
+        if (skipped === check.latestVersion) return
+        setUpdateCheck(check)
+      }).catch(() => { /* 离线或接口限流时不提示 */ })
+    }, 1600)
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [ready, settings.autoCheckUpdate])
+
   useEffect(() => {
     if (!ready || !splashDone || hasSeenOnboarding()) return
     const timer = window.setTimeout(() => setTourOpen(true), 360)
@@ -141,6 +159,16 @@ export function App() {
     markOnboardingSeen()
     if (next) setPage(next)
     else if (completed) setPage('library')
+  }, [])
+
+  const dismissUpdate = useCallback((check: UpdateCheck) => {
+    try { localStorage.setItem('stardock.update.skipped', check.latestVersion) } catch { /* 隐私模式忽略 */ }
+    setUpdateCheck(null)
+  }, [])
+
+  const openUpdateSettings = useCallback(() => {
+    setUpdateCheck(null)
+    setPage('settings')
   }, [])
 
   const running = useMemo(() => jobs.filter(job => job.state === 0).length, [jobs])
@@ -173,6 +201,14 @@ export function App() {
           error={bootError}
           onRetry={retryBoot}
           onDone={finishSplash}
+        />
+      )}
+      {ready && splashDone && updateCheck && (
+        <UpdateBanner
+          check={updateCheck}
+          onDismiss={() => dismissUpdate(updateCheck)}
+          onOpenSettings={openUpdateSettings}
+          onMessage={toast}
         />
       )}
       {ready && splashDone && tourOpen && (

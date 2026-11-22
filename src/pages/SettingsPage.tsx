@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, ChevronDown, ChevronRight, Compass, Cpu, ExternalLink, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
 import { api } from '../api'
 import { releaseHistory, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
-import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState } from '../types'
+import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState, UpdateCheck } from '../types'
+import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 
 const accents = [
@@ -14,7 +15,7 @@ const accents = [
   { name: '石墨', value: '#5b6472' },
 ]
 
-type SettingsSection = 'appearance' | 'inference' | 'sources' | 'storage' | 'about' | 'updates'
+type SettingsSection = 'appearance' | 'inference' | 'sources' | 'storage' | 'update' | 'about' | 'updates'
 
 const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
   appearance: {
@@ -36,6 +37,11 @@ const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; des
     eyebrow: 'Storage',
     title: '存储与数据',
     description: '模型、会话与界面偏好均保存在本机数据目录，不写入系统目录。',
+  },
+  update: {
+    eyebrow: 'Version check',
+    title: '版本更新',
+    description: '每次打开应用时可自动检查公开仓库的最新 Release；发现新版本后直接下载安装包，并用 SHA256SUMS.txt 校验后再交给系统安装。',
   },
   about: {
     eyebrow: 'About',
@@ -481,6 +487,207 @@ function StorageSettings({ hardware }: { hardware: HardwareProfile | null }) {
   )
 }
 
+function VersionUpdateSettings({ settings, onChange }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+}) {
+  const [check, setCheck] = useState<UpdateCheck | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const { download, busy, start, cancel, launch, reveal, percent } = useUpdateDownload(setNotice)
+  const downloading = download?.state === 'downloading' || download?.state === 'verifying'
+  const ready = download?.state === 'ready'
+
+  useEffect(() => {
+    let alive = true
+    setChecking(true)
+    void api.checkUpdate(false).then(next => {
+      if (!alive) return
+      setCheck(next)
+      if (next.error) setError(next.error)
+    }).catch((e: unknown) => {
+      if (alive) setError(e instanceof Error ? e.message : '检查更新失败')
+    }).finally(() => {
+      if (alive) setChecking(false)
+    })
+    return () => { alive = false }
+  }, [])
+
+  async function runCheck() {
+    setChecking(true)
+    setError('')
+    try {
+      const next = await api.checkUpdate(true)
+      setCheck(next)
+      if (next.error) setError(next.error)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '检查更新失败')
+    } finally { setChecking(false) }
+  }
+
+  function openExternal(url: string) {
+    if (!url) return
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('open_url', { url }))
+      .catch(() => { window.open(url, '_blank', 'noreferrer') })
+  }
+
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">启动时自动检查更新</div>
+            <div className="setting-desc">打开应用后读取公开仓库的最新 Release，发现新版本才提示；关闭后应用不会主动请求 GitHub。</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.autoCheckUpdate}
+            aria-label="启动时自动检查更新"
+            className={`source-switch ${settings.autoCheckUpdate ? 'on' : ''}`}
+            onClick={() => onChange({ autoCheckUpdate: !settings.autoCheckUpdate })}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">当前版本 v{APP_VERSION}</div>
+            <div className="setting-desc">
+              检查对象是公开仓库的 releases/latest；只读取版本号、公告与资产列表，不上报本机信息。
+            </div>
+          </div>
+          <button type="button" className="btn ghost sm" disabled={checking} onClick={() => void runCheck()}>
+            <RefreshCw aria-hidden />{checking ? '检查中…' : '立即检查'}
+          </button>
+        </div>
+      </section>
+
+      {error && (
+        <div className="settings-callout update-error-line">
+          <AlertCircle size={14} aria-hidden />{error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="settings-callout update-error-line">
+          <AlertCircle size={14} aria-hidden />{notice}
+        </div>
+      )}
+
+      {!check && checking && (
+        <section className="settings-card settings-detail-card">
+          <div className="update-latest"><RefreshCw className="spin" size={16} aria-hidden />正在读取公开仓库的 Release…</div>
+        </section>
+      )}
+
+      {check && check.available && (
+        <section className="settings-card settings-detail-card update-result">
+          <div className="update-result-head">
+            <div>
+              <div className="setting-name">发现新版本 v{check.latestVersion}</div>
+              <div className="setting-desc">
+                {check.releaseName || `v${check.latestVersion}`}{check.publishedAt ? ` · ${formatReleaseDate(check.publishedAt)} 发布` : ''}
+              </div>
+            </div>
+            <span className="chip accent">可更新</span>
+          </div>
+
+          {check.notes && (
+            <div className="update-notes">
+              {noteLines(check.notes).map((line, index) => line.kind === 'sub'
+                ? <div className="update-notes-sub" key={index}>{line.text}</div>
+                : line.kind === 'item'
+                  ? <div className="update-notes-item" key={index}>{line.text}</div>
+                  : <div className="update-notes-text" key={index}>{line.text}</div>)}
+            </div>
+          )}
+
+          <div className="update-asset">
+            <div className="update-asset-copy">
+              <div className="update-asset-name">{check.asset?.name ?? '这个版本没有可下载的安装包'}</div>
+              <div className="update-asset-meta">
+                {check.asset ? formatBytes(check.asset.size) : '只有源码或没有资产'}
+                {ready && download?.verified ? ' · 已通过 SHA256 校验' : ''}
+                {ready && download && !download.verified ? ' · 未取得校验值' : ''}
+              </div>
+            </div>
+            <div className="update-asset-actions">
+              {ready ? (
+                <>
+                  <button type="button" className="btn primary sm" onClick={() => void launch()}>
+                    <Check aria-hidden />打开安装包
+                  </button>
+                  <button type="button" className="btn ghost sm" onClick={() => void reveal()}>
+                    <FolderOpen aria-hidden />打开文件夹
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn primary sm"
+                    disabled={busy || downloading || !check.asset}
+                    onClick={() => void start()}
+                  >
+                    <Download aria-hidden />{downloading ? '下载中…' : '一键下载'}
+                  </button>
+                  {downloading && (
+                    <button type="button" className="btn ghost sm" onClick={() => void cancel()}>取消</button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {downloading && (
+            <div className="update-progress">
+              <div className="update-progress-bar"><span style={{ width: `${percent}%` }} /></div>
+              <div className="update-progress-note">
+                {download?.state === 'verifying' ? '正在校验 SHA256…' : download?.receivedBytes ? `正在下载 ${percent}% · ${formatBytes(download?.receivedBytes ?? 0)}` : '正在连接下载地址…'}
+              </div>
+            </div>
+          )}
+
+          {download?.state === 'failed' && download.error && (
+            <div className="update-inline-error">{download.error}</div>
+          )}
+
+          {ready && download && !download.verified && (
+            <div className="settings-callout">
+              这一版没有取到 SHA256SUMS.txt 校验值，安装包不会被自动打开；请在下载目录自行确认后再运行。
+            </div>
+          )}
+
+          <div className="update-foot">
+            <button type="button" className="btn ghost sm" onClick={() => openExternal(check.releaseUrl)}>
+              <ExternalLink aria-hidden />在 GitHub 查看
+            </button>
+            <span className="update-foot-note">只打开公开仓库的 Release 页面</span>
+          </div>
+        </section>
+      )}
+
+      {check && !check.available && !check.error && (
+        <section className="settings-card settings-detail-card">
+          <div className="update-latest">
+            <Check size={16} aria-hidden />已是最新版本 v{check.currentVersion}
+            <span className="update-latest-note">公开仓库最新为 v{check.latestVersion || check.currentVersion}</span>
+          </div>
+        </section>
+      )}
+
+      <div className="settings-callout">
+        版本检查只请求公开仓库 <strong>modeldock-ui</strong> 的 Release 接口；不带令牌、不上报设备信息。安装包下载到
+        %APPDATA%\ModelDock\updates，校验通过后才允许从应用内打开。自动检查默认开启，可在此页关闭。
+      </div>
+    </>
+  )
+}
+
 function AboutSettings({ onReplayTour }: { onReplayTour: () => void }) {
   return (
     <section className="settings-card settings-detail-card">
@@ -655,7 +862,7 @@ function UpdateSettings() {
       </section>
 
       <div className="settings-callout">
-        更新公告随安装包离线发布，不联网检查更新。运行新版本安装包覆盖安装即可；模型、会话与偏好保存在本机数据目录。
+        更新公告随安装包离线发布；是否检查新版本在“版本更新”分组里开关，默认启动时检查一次公开仓库的 Release。运行新版本安装包覆盖安装即可；模型、会话与偏好保存在本机数据目录。
       </div>
     </>
   )
@@ -714,6 +921,12 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
       icon: HardDrive,
     },
     {
+      id: 'update',
+      title: '版本更新',
+      summary: settings.autoCheckUpdate ? `启动时自动检查 · v${APP_VERSION}` : '自动检查已关闭',
+      icon: RefreshCw,
+    },
+    {
       id: 'about',
       title: '关于天枢',
       summary: `v${APP_VERSION} · Tauri 2 + React`,
@@ -736,6 +949,7 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
           {section === 'inference' && <InferenceSettings hardware={hardware} settings={settings} onChange={onChange} />}
           {section === 'sources' && <SourcesSettings onStateChange={setSourceState} />}
           {section === 'storage' && <StorageSettings hardware={hardware} />}
+          {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} />}
           {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
           {section === 'updates' && <UpdateSettings />}
         </div>
@@ -749,7 +963,7 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
         <div className="page-head-copy">
           <div className="eyebrow">Preferences</div>
           <h1 className="page-title">设置</h1>
-          <p className="page-sub">按功能分为六个分组，进入后仅处理对应设置；所有偏好仅保存在本机，不上传。</p>
+          <p className="page-sub">按功能分为七个分组，进入后仅处理对应设置；所有偏好仅保存在本机，不上传。</p>
         </div>
       </div>
 

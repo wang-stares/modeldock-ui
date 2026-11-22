@@ -1,4 +1,4 @@
-import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk } from './types'
+import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -74,6 +74,12 @@ export const api = {
   sources: () => request<ModelSourcesState>('/api/sources'),
   saveSource: (id: string, update: ModelSourceUpdate) =>
     request<ModelSourcesState>(`/api/sources/${id}`, { method: 'PUT', body: JSON.stringify(update) }),
+  checkUpdate: (force = false) => request<UpdateCheck>(`/api/update/check${force ? '?force=true' : ''}`),
+  updateDownload: () => request<UpdateDownload>('/api/update/download'),
+  startUpdateDownload: () => request<UpdateDownload>('/api/update/download', { method: 'POST' }),
+  cancelUpdateDownload: () => request<UpdateDownload>('/api/update/download/cancel', { method: 'POST' }),
+  launchUpdate: () => request<{ ok: boolean }>('/api/update/launch', { method: 'POST' }),
+  revealUpdate: () => request<{ ok: boolean }>('/api/update/reveal', { method: 'POST' }),
 }
 
 export async function streamChat(

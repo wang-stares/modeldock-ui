@@ -87,7 +87,37 @@ export interface ChatResult { text: string; completed: boolean; cancelled: boole
 
 export type BackendChoice = 'auto' | 'embedded' | 'ollama' | 'edge0'
 
-export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice }
+export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean }
+
+export interface UpdateAssetInfo { name: string; size: number; url: string }
+
+export interface UpdateCheck {
+  available: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseName: string
+  releaseUrl: string
+  publishedAt: string
+  notes: string
+  asset: UpdateAssetInfo | null
+  checksumsUrl: string | null
+  checkedAt: string
+  error: string
+}
+
+export type UpdateDownloadState = 'idle' | 'downloading' | 'verifying' | 'ready' | 'failed'
+
+export interface UpdateDownload {
+  state: UpdateDownloadState
+  fileName: string
+  receivedBytes: number
+  totalBytes: number
+  path: string
+  verified: boolean
+  expectedSha: string
+  actualSha: string
+  error: string
+}
 
 export interface Edge0Settings { endpoint: string; modelAlias: string; modelDirectory: string }
 export interface Edge0Status { available: boolean; endpoint: string; detail: string }
