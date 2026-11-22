@@ -1,4 +1,4 @@
-import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult } from './types'
+import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -78,8 +78,10 @@ export const api = {
   updateDownload: () => request<UpdateDownload>('/api/update/download'),
   updateDiagnostics: () => request<{ channel: string; logPath: string; text: string }>('/api/update/diagnostics'),
   startUpdateDownload: () => request<UpdateDownload>('/api/update/download', { method: 'POST' }),
-  cancelUpdateDownload: () => request<UpdateDownload>('/api/update/download/cancel', { method: 'POST' }),
-  launchUpdate: () => request<{ ok: boolean }>('/api/update/launch', { method: 'POST' }),
+  updateResult: () => request<UpdateOutcome | null>('/api/update/result'),
+  prepareUpdateDelta: () => request<DeltaPrepareResult>('/api/update/delta/prepare', { method: 'POST' }),
+  applyUpdateDelta: (planPath: string, version: string) =>
+    import('@tauri-apps/api/core').then(({ invoke }) => invoke('apply_delta_update', { planPath, version })),
   revealUpdate: () => request<{ ok: boolean }>('/api/update/reveal', { method: 'POST' }),
   updateInstallPrep: () => request<UpdateInstallPrep>('/api/update/install-prep'),
   pauseUpdateDownload: () => request<UpdateDownload>('/api/update/download/pause', { method: 'POST' }),

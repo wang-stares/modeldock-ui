@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Com
 import { api } from '../api'
 import { releaseHistory, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
-import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState, UpdateCheck } from '../types'
+import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState, UpdateCheck, UpdateOutcome } from '../types'
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 
@@ -502,11 +502,18 @@ function VersionUpdateSettings({ settings, onChange }: {
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const { download, busy, installing, start, pause, install, launch, reveal, percent } = useUpdateDownload(setNotice)
+  const [outcome, setOutcome] = useState<UpdateOutcome | null>(null)
+  const { download, busy, installing, start, pause, install, reveal, percent } = useUpdateDownload(setNotice)
   const [confirming, setConfirming] = useState(false)
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const paused = download?.state === 'paused'
   const ready = download?.state === 'ready'
+
+  useEffect(() => {
+    let alive = true
+    void api.updateResult().then(next => { if (alive) setOutcome(next) }).catch(() => { /* 没有记录就保持空 */ })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -613,6 +620,23 @@ function VersionUpdateSettings({ settings, onChange }: {
 
         <div className="setting-row">
           <div className="setting-copy">
+            <div className="setting-name">优先使用增量更新</div>
+            <div className="setting-desc">默认开启：升级时只下载改动过的文件（约几 MB），在退出后覆盖并校验；增量不可用或还原失败会自动改用完整安装包。</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.deltaUpdate}
+            aria-label="优先使用增量更新"
+            className={`source-switch ${settings.deltaUpdate ? 'on' : ''}`}
+            onClick={() => onChange({ deltaUpdate: !settings.deltaUpdate })}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
             <div className="setting-name">退出应用时自动安装</div>
             <div className="setting-desc">默认开启：安装包已下好并校验通过时，从托盘菜单“退出”会先装完再退出，下次打开就是新版；关闭后只在点“重启并升级”时安装。</div>
           </div>
@@ -637,6 +661,20 @@ function VersionUpdateSettings({ settings, onChange }: {
             <FileText aria-hidden />复制日志
           </button>
         </div>
+
+        {outcome && (
+          <div className="setting-row">
+            <div className="setting-copy">
+              <div className="setting-name">上次更新{outcome.ok ? '已完成' : '未完成'}</div>
+              <div className="setting-desc">
+                {outcome.ok
+                  ? `已升级到 v${outcome.version}（${formatReleaseDate(outcome.at)}）。`
+                  : `升级到 v${outcome.version} 没有生效：${outcome.reason}`}
+              </div>
+            </div>
+            <span className="chip">{outcome.ok ? '成功' : '未完成'}</span>
+          </div>
+        )}
 
         <div className="setting-row">
           <div className="setting-copy">
@@ -706,9 +744,6 @@ function VersionUpdateSettings({ settings, onChange }: {
                   <button type="button" className="btn primary sm" disabled={busy} onClick={() => setConfirming(true)}>
                     <Check aria-hidden />重启并升级
                   </button>
-                  <button type="button" className="btn ghost sm" onClick={() => void launch()}>
-                    手动打开安装包
-                  </button>
                   <button type="button" className="btn ghost sm" onClick={() => void reveal()}>
                     <FolderOpen aria-hidden />打开文件夹
                   </button>
@@ -766,7 +801,7 @@ function VersionUpdateSettings({ settings, onChange }: {
                 升级会关闭当前窗口，并中断正在进行的模型下载（升级后可断点续传）。安装过程会弹一次系统权限确认。
               </div>
               <div className="update-confirm-actions">
-                <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install()}>
+                <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install(settings.deltaUpdate)}>
                   <Check aria-hidden />确认重启
                 </button>
                 <button type="button" className="btn ghost sm" onClick={() => setConfirming(false)}>再等等</button>

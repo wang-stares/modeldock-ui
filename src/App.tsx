@@ -13,7 +13,7 @@ import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type { AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable' }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true }
 
 function loadSettings(): AppSettings {
   try {

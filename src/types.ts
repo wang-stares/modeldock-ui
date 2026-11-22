@@ -87,7 +87,7 @@ export interface ChatResult { text: string; completed: boolean; cancelled: boole
 
 export type BackendChoice = 'auto' | 'embedded' | 'ollama' | 'edge0'
 
-export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean; autoDownloadUpdate: boolean; autoInstallOnQuit: boolean; updateChannel: 'stable' | 'beta' }
+export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean; autoDownloadUpdate: boolean; autoInstallOnQuit: boolean; updateChannel: 'stable' | 'beta'; deltaUpdate: boolean }
 
 export interface UpdateAssetInfo { name: string; size: number; url: string }
 
@@ -125,6 +125,25 @@ export interface UpdateDownload {
 }
 
 /** 应用内升级前置结论：能不能装、装的是哪一版、还差什么条件。 */
+/** 增量准备结论：补丁与还原是否就绪、计划文件与下载体积。 */
+export interface DeltaPrepareResult {
+  ok: boolean
+  version: string
+  files: number
+  bytes: number
+  downloadedBytes: number
+  planPath: string
+  error: string
+}
+
+/** 上次升级的结论：版本号、是否成功、时间与原因。 */
+export interface UpdateOutcome {
+  version: string
+  ok: boolean
+  at: string
+  reason: string
+}
+
 export interface UpdateInstallPrep {
   canInstall: boolean
   kind: 'installer' | 'portable' | 'dev'

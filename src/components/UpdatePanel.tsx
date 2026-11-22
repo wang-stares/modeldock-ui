@@ -75,10 +75,19 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     try { setDownload(await api.pauseUpdateDownload()) } catch { /* 暂停失败保持原状态 */ }
   }
 
-  /** 先问服务端能不能装，再交给桌面壳退出并安装；绿色版或校验缺失会被这里拦住。 */
-  async function install() {
+  /** 先问服务端能不能装，再交给桌面壳退出并安装；绿色版或校验缺失会被这里拦住。
+   *  开启增量时先尝试只下补丁（约 5MB），失败或不可用自动回落到完整安装包。 */
+  async function install(preferDelta = true) {
     setBusy(true)
     try {
+      if (preferDelta) {
+        const delta = await api.prepareUpdateDelta().catch(() => null)
+        if (delta?.ok) {
+          setInstalling(true)
+          await api.applyUpdateDelta(delta.planPath, delta.version)
+          return
+        }
+      }
       const prep = await api.updateInstallPrep()
       if (!prep.canInstall) throw new Error(prep.error || '当前无法应用内升级')
       setInstalling(true)
@@ -87,15 +96,6 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
       setInstalling(false)
       onMessage?.(e instanceof Error ? e.message : '无法启动升级')
     } finally { setBusy(false) }
-  }
-
-  /** 手动兜底：仍然保留“打开安装包”，用于自动升级被环境拦住时自行确认。 */
-  async function launch() {
-    try {
-      await api.launchUpdate()
-    } catch (e) {
-      onMessage?.(e instanceof Error ? e.message : '无法打开安装包')
-    }
   }
 
   async function reveal() {
@@ -125,7 +125,7 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     ? Math.min(100, Math.round(download.receivedBytes * 100 / download.totalBytes))
     : 0
 
-  return { download, busy, installing, start, pause, install, launch, reveal, percent, speed }
+  return { download, busy, installing, start, pause, install, reveal, percent, speed }
 }
 
 /** 升级前的一次确认：窗口会被关掉，正在跑的模型下载会中断（升级后可续传）。 */
