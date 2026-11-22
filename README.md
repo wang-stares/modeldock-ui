@@ -2,10 +2,10 @@
   <img src="src/assets/brand-mark.png" width="96" alt="天枢" />
 </p>
 
-<h1 align="center">天枢 · 前端</h1>
+<h1 align="center">天枢 / ModelDock</h1>
 
 <p align="center">
-  <strong>ModelDock UI</strong><br />
+  <strong>ModelDock UI</strong> · 前端源码开源 · Windows 完整应用可下载<br />
   React 19 + TypeScript + Vite 的 Windows 桌面端界面
 </p>
 
@@ -30,6 +30,8 @@ Windows 安装包与免安装压缩包见 **[Releases](https://github.com/wang-s
 - `SHA256SUMS.txt`：下载校验
 
 Releases 中的二进制是完整应用构建产物，**不包含源码**；后端、推理、下载、Agent 工具、安装器与发布流水线源码仍不公开。
+
+> 视频回顾的是 1.x 的演进；这里下载的是当前完整版 3.6.0。
 
 ## 这是什么
 
