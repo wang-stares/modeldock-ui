@@ -487,6 +487,13 @@ function StorageSettings({ hardware }: { hardware: HardwareProfile | null }) {
   )
 }
 
+/** 检查时间只显示时:分，避免用户以为是旧结果。 */
+function formatClock(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '刚刚'
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
 function VersionUpdateSettings({ settings, onChange }: {
   settings: AppSettings
   onChange: (patch: Partial<AppSettings>) => void
@@ -519,10 +526,17 @@ function VersionUpdateSettings({ settings, onChange }: {
   async function runCheck() {
     setChecking(true)
     setError('')
+    setNotice('')
     try {
       const next = await api.checkUpdate(true)
       setCheck(next)
-      if (next.error) setError(next.error)
+      if (next.error) {
+        setError(next.error)
+      } else if (next.available) {
+        setNotice(`发现新版本 v${next.latestVersion}${next.forced ? '（必须升级）' : ''}，可以开始下载。`)
+      } else {
+        setNotice(`已是最新版本 v${next.currentVersion}（${formatClock(next.checkedAt)} 完成检查）`)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '检查更新失败')
     } finally { setChecking(false) }
@@ -773,7 +787,9 @@ function VersionUpdateSettings({ settings, onChange }: {
         <section className="settings-card settings-detail-card">
           <div className="update-latest">
             <Check size={16} aria-hidden />已是最新版本 v{check.currentVersion}
-            <span className="update-latest-note">公开仓库最新为 v{check.latestVersion || check.currentVersion}</span>
+            <span className="update-latest-note">
+              公开仓库最新为 v{check.latestVersion || check.currentVersion} · {formatClock(check.checkedAt)} 检查
+            </span>
           </div>
         </section>
       )}

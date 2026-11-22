@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { api, installUpdate } from '../api'
 import type { UpdateCheck, UpdateDownload } from '../types'
@@ -106,11 +106,26 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     }
   }
 
+  // 速度与剩余时间：按两次状态采样的差值估算，避免为它再加一个接口。
+  const sample = useRef<{ bytes: number; at: number }>({ bytes: 0, at: 0 })
+  const [speed, setSpeed] = useState(0)
+  useEffect(() => {
+    if (!download || download.state !== 'downloading') { setSpeed(0); sample.current = { bytes: 0, at: 0 }; return }
+    const now = Date.now()
+    const prev = sample.current
+    if (prev.at === 0) { sample.current = { bytes: download.receivedBytes, at: now }; return }
+    const elapsed = now - prev.at
+    if (elapsed < 900) return
+    const delta = download.receivedBytes - prev.bytes
+    if (delta > 0) setSpeed(delta * 1000 / elapsed)
+    sample.current = { bytes: download.receivedBytes, at: now }
+  }, [download])
+
   const percent = download && download.totalBytes > 0
     ? Math.min(100, Math.round(download.receivedBytes * 100 / download.totalBytes))
     : 0
 
-  return { download, busy, installing, start, pause, install, launch, reveal, percent }
+  return { download, busy, installing, start, pause, install, launch, reveal, percent, speed }
 }
 
 /** 升级前的一次确认：窗口会被关掉，正在跑的模型下载会中断（升级后可续传）。 */
@@ -135,15 +150,16 @@ function InstallConfirm({ busy, onConfirm, onCancel }: {
 }
 
 /** 启动时检测到新版本后的轻提示：进度、暂停/继续、重启升级都在横幅里完成，细节进设置页。 */
-export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, autoInstallOnQuit = true, forced = false }: {
+export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, onSnooze, autoInstallOnQuit = true, forced = false }: {
   check: UpdateCheck
   onDismiss: () => void
   onOpenSettings: () => void
   onMessage?: (text: string) => void
+  onSnooze?: (hours: number) => void
   autoInstallOnQuit?: boolean
   forced?: boolean
 }) {
-  const { download, busy, installing, start, pause, install, reveal, percent } = useUpdateDownload(onMessage)
+  const { download, busy, installing, start, pause, install, reveal, percent, speed } = useUpdateDownload(onMessage)
   const [confirming, setConfirming] = useState(false)
   const ready = download?.state === 'ready'
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
@@ -191,7 +207,9 @@ export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, auto
         <div className="update-progress" aria-label={`已下载 ${percent}%`}>
           <div className="update-progress-bar"><span style={{ width: `${percent}%` }} /></div>
           <div className="update-progress-note">
-            {download?.state === 'verifying' ? '正在校验 SHA256…' : `正在下载 ${percent}%`}
+            {download?.state === 'verifying'
+              ? '正在校验签名与 SHA256…'
+              : `正在下载 ${percent}%${speed > 0 ? ` · ${formatBytes(speed)}/s` : ''}${speed > 0 && download && download.totalBytes > download.receivedBytes ? ` · 剩余 ${Math.max(1, Math.round((download.totalBytes - download.receivedBytes) / speed))} 秒` : ''}`}
           </div>
         </div>
       )}
@@ -218,6 +236,7 @@ export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, auto
                 <Check aria-hidden />重启并升级
               </button>
               <button type="button" className="btn ghost sm" onClick={() => void reveal()}>安装包</button>
+              {onSnooze && <button type="button" className="btn ghost sm" onClick={() => onSnooze(24)}>24 小时后</button>}
             </>
           ) : paused ? (
             <button type="button" className="btn primary sm" disabled={busy} onClick={() => void start()}>

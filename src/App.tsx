@@ -139,6 +139,11 @@ export function App() {
         let skipped = ''
         try { skipped = localStorage.getItem('stardock.update.skipped') ?? '' } catch { /* 隐私模式忽略 */ }
         if (skipped === check.latestVersion && !check.forced) return
+        // 主动延后提醒：到点之前不再弹同一条横幅。
+        try {
+          const snooze = JSON.parse(localStorage.getItem('stardock.update.snooze') ?? '{}')
+          if (!check.forced && snooze.version === check.latestVersion && Number(snooze.until) > Date.now()) return
+        } catch { /* 隐私模式忽略 */ }
         setUpdateCheck(check)
       }).catch(() => { /* 离线或接口限流时不提示 */ })
     }, 1600)
@@ -194,6 +199,13 @@ export function App() {
     else if (completed) setPage('library')
   }, [])
 
+  const snoozeUpdate = useCallback((check: UpdateCheck, hours: number) => {
+    try {
+      localStorage.setItem('stardock.update.snooze', JSON.stringify({ version: check.latestVersion, until: Date.now() + hours * 3600_000 }))
+    } catch { /* 隐私模式忽略 */ }
+    setUpdateCheck(null)
+  }, [])
+
   const dismissUpdate = useCallback((check: UpdateCheck) => {
     try { localStorage.setItem('stardock.update.skipped', check.latestVersion) } catch { /* 隐私模式忽略 */ }
     setUpdateCheck(null)
@@ -242,6 +254,7 @@ export function App() {
           onDismiss={() => dismissUpdate(updateCheck)}
           onOpenSettings={openUpdateSettings}
           onMessage={toast}
+          onSnooze={(hours) => snoozeUpdate(updateCheck, hours)}
           autoInstallOnQuit={settings.autoInstallOnQuit}
           forced={updateCheck.forced === true}
         />

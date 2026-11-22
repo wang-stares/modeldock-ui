@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <code>v3.11.0</code> · <code>MIT</code>
+  <code>v3.11.1</code> · <code>MIT</code>
 </p>
 
 <p align="center">
@@ -25,18 +25,18 @@
 
 Windows 安装包与免安装压缩包见 **[Releases](https://github.com/wang-stares/modeldock-ui/releases/latest)**。
 
-- `Tianshu-Setup-3.11.0-x64.exe`：安装版
-- `Tianshu-3.11.0-win64.zip`：免安装版，解压后双击 `Tianshu.exe`
+- `Tianshu-Setup-3.11.1-x64.exe`：安装版
+- `Tianshu-3.11.1-win64.zip`：免安装版，解压后双击 `Tianshu.exe`
 - `SHA256SUMS.txt`：下载校验
 - `SHA256SUMS.txt.sig`：校验文件的签名，客户端用它确认更新包没被替换
 
 Releases 中的二进制是完整应用构建产物，**不包含源码**；后端、推理、下载、Agent 工具、安装器与发布流水线源码仍不公开。
 
-> 历史版本：1.0.0 → 3.11.0 共 98 个版本已镜像到 Releases。1.0.0 / 1.0.1 是规则里程碑，只有版本记录，不含应用安装包；从 1.1.0 起提供 Windows 应用包。
+> 历史版本：1.0.0 → 3.11.1 共 99 个版本已镜像到 Releases。1.0.0 / 1.0.1 是规则里程碑，只有版本记录，不含应用安装包；从 1.1.0 起提供 Windows 应用包。
 
 > 历史版本的免安装 zip 已移除调试符号（`.pdb`）；下载校验以 Release 内的 `SHA256SUMS.txt` 为准。
 
-> 视频回顾的是 1.x 的演进；这里下载的是当前完整版 3.11.0。
+> 视频回顾的是 1.x 的演进；这里下载的是当前完整版 3.11.1。
 
 > 3.11.0 给更新加了签名与加速：发布附带 `SHA256SUMS.txt.sig`，客户端先验签再校验安装包，签名不过拒绝自动升级；下载优先走公共加速源，失败自动回退官方地址。
 >

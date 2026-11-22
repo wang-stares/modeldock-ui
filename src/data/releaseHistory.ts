@@ -21,6 +21,36 @@ export const releaseHistory: ReleaseHistoryGroup[] = [
     range: "2026-11-19 — 2026-11-23",
     items: [
       {
+        version: "3.11.1",
+        date: "2026-11-23",
+        title: "检查更新没反馈",
+        sections: [
+          {
+            title: "修复",
+            items: [
+              { title: "检查更新没反馈", detail: "手动点「立即检查」后，按钮下方会直接给出结果（最新版本与检查时间、发现的新版本、或失败原因），不再出现「点完像没反应」。" },
+              { title: "签名状态误报", detail: "重启后不再把「有哈希」当成「已签名」，ready.json 如实记录签名结果。" },
+            ],
+          },
+          {
+            title: "变更",
+            items: [
+              { title: "更新策略改由签名保护", detail: "min-version 与 rollout 从被签名的 SHA256SUMS.txt 读取，Release 正文只负责展示；正文被改不会改变强制升级与放量规则。" },
+              { title: "beta 通道取更多发布", detail: "发布列表从 10 条放宽到 30 条，切回正式版时更容易拿到最新稳定版。" },
+            ],
+          },
+          {
+            title: "优化",
+            items: [
+              { title: "镜像更省心", detail: "加速源失败后冷却 24 小时再试；安装包校验不通过时自动换下一个源，官方直连始终兜底。" },
+              { title: "下载进度更清楚", detail: "新增实时速度与预计剩余时间，校验阶段文案改为「正在校验签名与 SHA256」。" },
+              { title: "延后提醒", detail: "更新横幅新增「24 小时后」，与「忽略此版本」并存。" },
+              { title: "最新版本卡片", detail: "补上完成检查的时间。" },
+            ],
+          },
+        ],
+      },
+      {
         version: "3.11.0",
         date: "2026-11-23",
         title: "更新包签名",
