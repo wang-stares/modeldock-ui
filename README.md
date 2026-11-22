@@ -13,11 +13,29 @@
   <code>v3.6.0</code> · <code>MIT</code>
 </p>
 
+<p align="center">
+  <a href="https://github.com/wang-stares/modeldock-ui/releases/latest"><strong>下载 Windows 完整应用 →</strong></a>
+</p>
+
+<p align="center">
+  <img src="docs/cover.png" alt="天枢 1.x" width="880" />
+</p>
+
+## 下载
+
+Windows 安装包与免安装压缩包见 **[Releases](https://github.com/wang-stares/modeldock-ui/releases/latest)**。
+
+- `Tianshu-Setup-3.6.0-x64.exe`：安装版
+- `Tianshu-3.6.0-win64.zip`：免安装版，解压后双击 `Tianshu.exe`
+- `SHA256SUMS.txt`：下载校验
+
+Releases 中的二进制是完整应用构建产物，**不包含源码**；后端、推理、下载、Agent 工具、安装器与发布流水线源码仍不公开。
+
 ## 这是什么
 
-这是「天枢 / 星坞 StarDock」桌面应用的**前端界面**仓库。
+这是「天枢 / 星坞 StarDock」桌面应用的**前端界面**仓库，也是当前 Windows 完整应用的公开下载入口。
 
-本仓库只包含界面层：页面、组件、样式、前端状态与本地交互。以下内容**不在本仓库**，也不提供源码：
+本仓库的源码只包含界面层：页面、组件、样式、前端状态与本地交互。以下内容**不在本仓库**，也不提供源码：
 
 - 本地后端、模型目录服务、下载队列与完整性校验
 - 推理路由、模型加载、会话存储与 Agent 工具执行
@@ -60,6 +78,8 @@ src/
 
 ## 许可
 
-代码以 MIT 许可发布，见 [LICENSE](LICENSE)。
+前端代码以 MIT 许可发布，见 [LICENSE](LICENSE)。
+
+Releases 中的完整应用二进制、后端与安装器源码不因本仓库的 MIT 许可而开源，相关权利保留。
 
 「天枢」「星坞 StarDock」「ModelDock」名称、图标与品牌视觉不在 MIT 许可范围内；如需再分发产品或使用品牌标识，请先获得授权。
