@@ -21,6 +21,20 @@ export const releaseHistory: ReleaseHistoryGroup[] = [
     range: "2026-11-19 — 2026-11-23",
     items: [
       {
+        version: "3.12.1",
+        date: "2026-11-23",
+        title: "绿色包点“重启并升级”被拒",
+        sections: [
+          {
+            title: "修复",
+            items: [
+              { title: "绿色包点“重启并升级”被拒", detail: "免安装版目录可写时，增量更新现在会直接在原地替换并重启，不再提示“不支持应用内升级”；只有只读目录或开发目录才拒绝。" },
+              { title: "提权只在该用的时候弹", detail: "目录可写时不弹 UAC；Program Files 这类只读目录仍然走一次系统权限确认。" },
+            ],
+          },
+        ],
+      },
+      {
         version: "3.12.0",
         date: "2026-11-23",
         title: "文件级增量更新",
