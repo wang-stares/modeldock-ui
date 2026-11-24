@@ -1,0 +1,7 @@
+name: Actions probe
+on: [push, workflow_dispatch]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "runner ok"; dotnet --version || true
