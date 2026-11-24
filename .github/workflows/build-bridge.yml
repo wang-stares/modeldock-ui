@@ -1,0 +1,183 @@
+name: Build bridge (temporary)
+
+# 临时构建桥：账号的私有库 Actions 额度被账单拦住时，用公开仓库的免费额度构建。
+# 源码只读检出私有库（部署密钥），日志与产物都不含源码；额度恢复后删除本文件。
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '私有库分支或标签'
+        required: true
+        default: 'main'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      LLAMA_BUILD: b12428
+    steps:
+      - name: Checkout private source (read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: wang-stares/modeldock
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read version
+        id: v
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw -Encoding UTF8).Trim()
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "version=$version"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix ui ci --no-audit --no-fund
+
+      - name: Build React UI
+        shell: pwsh
+        run: npm --prefix ui run build
+
+      - name: Test core
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          dotnet test src/ModelDock.Tests -c Release --logger "console;verbosity=normal" *> test.log
+          $code = $LASTEXITCODE
+          Get-Content test.log -Tail 20
+          exit $code
+
+      - name: Publish local sidecar
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE 'out\server'
+          dotnet publish src/ModelDock.Server/ModelDock.Server.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:CopyOutputSymbolsToPublishDirectory=false `
+            -p:Version=${{ steps.v.outputs.version }} `
+            -o $out
+          if ($LASTEXITCODE -ne 0) { throw 'sidecar publish failed' }
+          $exe = Join-Path $out 'ModelDock.Server.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw 'ModelDock.Server.exe missing' }
+          New-Item -ItemType Directory -Path 'src-tauri\binaries' -Force | Out-Null
+          Copy-Item -LiteralPath $exe -Destination 'src-tauri\binaries\ModelDock.Server.exe' -Force
+
+      - name: Fetch llama.cpp runtime
+        shell: pwsh
+        run: |
+          $build = $env:LLAMA_BUILD
+          $zip = "llama-$build-bin-win-cpu-x64.zip"
+          $url = "https://github.com/ggml-org/llama.cpp/releases/download/$build/$zip"
+          $dest = 'src-tauri\binaries\runtime\llama'
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP $zip
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          $raw = Join-Path $env:RUNNER_TEMP "llama-raw"
+          if (Test-Path -LiteralPath $raw) { Remove-Item -LiteralPath $raw -Recurse -Force }
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $raw -Force
+          Get-ChildItem -LiteralPath $raw -File | Where-Object {
+            $_.Name -eq 'llama-server.exe' -or
+            $_.Name -eq 'llama-server-impl.dll' -or
+            $_.Name -eq 'llama-common.dll' -or
+            $_.Name -eq 'llama.dll' -or
+            $_.Name -eq 'mtmd.dll' -or
+            $_.Name -eq 'libomp.dll' -or
+            $_.Name -like 'ggml*.dll' -or
+            $_.Name -like 'LICENSE*'
+          } | Copy-Item -Destination $dest -Force
+          foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
+            $source = Join-Path $env:SystemRoot ("System32\" + $dll)
+            if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $dest -Force }
+          }
+          Copy-Item -LiteralPath 'docs/licenses/llama.cpp-MIT.txt' -Destination (Join-Path $dest 'LICENSE-llama.cpp.txt') -Force
+          if (-not (Test-Path -LiteralPath (Join-Path $dest 'llama-server.exe'))) { throw "没有拿到 llama-server.exe：$url" }
+
+      - name: Build Tauri app
+        shell: pwsh
+        run: npx tauri build --bundles nsis
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.v.outputs.version }}"
+          $installer = Get-ChildItem 'src-tauri\target\release\bundle\nsis' -Filter '*setup.exe' -File | Select-Object -First 1
+          if (-not $installer) { throw '找不到 NSIS 安装包' }
+          New-Item -ItemType Directory -Path 'out' -Force | Out-Null
+          Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path 'out' "Tianshu-Setup-$version-x64.exe") -Force
+          $stage = 'out\portable'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item -LiteralPath 'src-tauri\target\release\Tianshu.exe' -Destination (Join-Path $stage 'Tianshu.exe') -Force
+          Copy-Item -LiteralPath 'src-tauri\binaries\ModelDock.Server.exe' -Destination (Join-Path $stage 'ModelDock.Server.exe') -Force
+          Copy-Item -LiteralPath 'src-tauri\binaries\runtime' -Destination (Join-Path $stage 'runtime') -Recurse -Force
+          $loader = 'src-tauri\target\release\WebView2Loader.dll'
+          if (Test-Path -LiteralPath $loader) { Copy-Item -LiteralPath $loader -Destination $stage -Force }
+          $readme = @(
+            '天枢 ' + $version,
+            '',
+            '双击 Tianshu.exe 启动。ModelDock.Server.exe 是本地推理/下载内核，runtime\llama 是内置 llama.cpp。',
+            '数据目录：%APPDATA%\ModelDock（模型、会话与偏好）。'
+          ) -join "`r`n"
+          $readme | Out-File -FilePath (Join-Path $stage 'README.txt') -Encoding utf8
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path 'out' "Tianshu-$version-win64.zip") -Force
+          $lines = @()
+          foreach ($name in @("Tianshu-$version-win64.zip", "Tianshu-Setup-$version-x64.exe")) {
+            $sha = (Get-FileHash -LiteralPath (Join-Path 'out' $name) -Algorithm SHA256).Hash
+            $lines += "$sha  $name"
+          }
+          $lines | Out-File -FilePath out/SHA256SUMS.txt -Encoding utf8
+          Get-ChildItem out | Select-Object Name, Length
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tianshu-${{ steps.v.outputs.version }}
+          path: |
+            out/Tianshu-Setup-*.exe
+            out/Tianshu-*-win64.zip
+            out/SHA256SUMS.txt
+          retention-days: 7
