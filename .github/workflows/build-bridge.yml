@@ -164,13 +164,97 @@ jobs:
           ) -join "`r`n"
           $readme | Out-File -FilePath (Join-Path $stage 'README.txt') -Encoding utf8
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path 'out' "Tianshu-$version-win64.zip") -Force
+
+      - name: Build chain delta
+        shell: pwsh
+        run: |
+          $version = "${{ steps.v.outputs.version }}"
+          # 一个 Release 只带一条“上一版 -> 这一版”的增量，链条顺着发布顺序往下走。
+          python -m pip install --quiet bsdiff4
+          New-Item -ItemType Directory -Path 'delta/new' -Force | Out-Null
+          Expand-Archive -LiteralPath "out/Tianshu-$version-win64.zip" -DestinationPath 'delta/new' -Force
+
+          $prevVersion = ''
+          foreach ($tag in @(git tag --sort=-creatordate)) {
+            $candidate = $tag.TrimStart('v')
+            if ($candidate -eq $version) { continue }
+            $prevVersion = $candidate
+            break
+          }
+
+          $prevChain = ''
+          if ($prevVersion -ne '') {
+            $dir = Join-Path 'delta/base' $prevVersion
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            $url = "https://github.com/wang-stares/modeldock-ui/releases/download/v$prevVersion/Tianshu-$prevVersion-win64.zip"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile (Join-Path $dir "Tianshu-$prevVersion-win64.zip")
+              Expand-Archive -LiteralPath (Join-Path $dir "Tianshu-$prevVersion-win64.zip") -DestinationPath $dir -Force
+            } catch {
+              Write-Warning "基线 $prevVersion 下载失败：$($_.Exception.Message)"
+              $prevVersion = ''
+            }
+          }
+
+          New-Item -ItemType Directory -Path 'delta/chain' -Force | Out-Null
+          if ($prevVersion -ne '') {
+            $chainUrl = "https://github.com/wang-stares/modeldock-ui/releases/download/v$prevVersion/Tianshu-chain.json.gz"
+            try {
+              Invoke-WebRequest -Uri $chainUrl -OutFile 'delta/chain/Tianshu-chain.json.gz'
+              $prevChain = 'delta/chain/Tianshu-chain.json.gz'
+            } catch { Write-Host '上一版还没有链条索引，本版从这一步开始。' }
+          }
+
+          if ($prevVersion -eq '') {
+            python scripts/build-chain.py '-' '-' '' '' '' 0 'out/Tianshu-chain.json.gz'
+            Write-Host '没有可用基线，本版只带空链条。'
+            exit 0
+          }
+
+          $name = "Tianshu-delta-$prevVersion-to-$version.json.gz"
+          python scripts/make-delta.py (Join-Path 'delta/base' $prevVersion) 'delta/new' $prevVersion $version "out/$name"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "out/$name")) { throw '增量生成失败' }
+          $sha = (Get-FileHash -LiteralPath "out/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = (Get-Item -LiteralPath "out/$name").Length
+          python scripts/build-chain.py $prevChain $name $prevVersion $version $sha $size 'out/Tianshu-chain.json.gz'
+          if ($LASTEXITCODE -ne 0) { throw '链条索引生成失败' }
+          Write-Host "增量：$name（$([math]::Round($size / 1MB, 1)) MB）"
+
+      - name: Checksums and signature
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          $version = "${{ steps.v.outputs.version }}"
+          $names = @("Tianshu-$version-win64.zip", "Tianshu-Setup-$version-x64.exe", "Tianshu-chain.json.gz")
           $lines = @()
-          foreach ($name in @("Tianshu-$version-win64.zip", "Tianshu-Setup-$version-x64.exe")) {
-            $sha = (Get-FileHash -LiteralPath (Join-Path 'out' $name) -Algorithm SHA256).Hash
-            $lines += "$sha  $name"
+          foreach ($name in $names) {
+            $path = Join-Path 'out' $name
+            if (Test-Path -LiteralPath $path) {
+              $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+              $lines += "$sha  $name"
+            }
+          }
+          $deltas = @(Get-ChildItem -Path 'out' -Filter 'Tianshu-delta-*.json.gz' -ErrorAction SilentlyContinue | Sort-Object Name)
+          foreach ($delta in $deltas) {
+            $sha = (Get-FileHash -LiteralPath $delta.FullName -Algorithm SHA256).Hash
+            $lines += "$sha  $($delta.Name)"
           }
           $lines | Out-File -FilePath out/SHA256SUMS.txt -Encoding utf8
-          Get-ChildItem out | Select-Object Name, Length
+          Get-Content out/SHA256SUMS.txt
+
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)) {
+            Write-Warning 'UPDATE_SIGNING_KEY 未配置，本次不生成更新签名。'
+            exit 0
+          }
+          $pem = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:UPDATE_SIGNING_KEY))
+          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
+          $ecdsa.ImportFromPem($pem)
+          $bytes = [IO.File]::ReadAllBytes('out/SHA256SUMS.txt')
+          $sig = $ecdsa.SignData($bytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+          [IO.File]::WriteAllText('out/SHA256SUMS.txt.sig', [Convert]::ToBase64String($sig))
+          $ecdsa.Dispose()
+          Write-Host 'SHA256SUMS.txt.sig 已生成'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -180,4 +264,7 @@ jobs:
             out/Tianshu-Setup-*.exe
             out/Tianshu-*-win64.zip
             out/SHA256SUMS.txt
+            out/SHA256SUMS.txt.sig
+            out/Tianshu-chain.json.gz
+            out/Tianshu-delta-*.json.gz
           retention-days: 7
