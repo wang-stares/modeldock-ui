@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 120
     env:
       LLAMA_BUILD: b12428
+      PYTHONIOENCODING: utf-8
     steps:
       - name: Checkout private source (read-only)
         uses: actions/checkout@v4
@@ -44,6 +45,8 @@ jobs:
       - name: Apply promotion version
         if: inputs.promote_version != ''
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           python scripts/bump-version.py "${{ inputs.promote_version }}"
           $tag = '${{ inputs.ref }}'.TrimStart('v')
