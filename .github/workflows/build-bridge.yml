@@ -113,8 +113,22 @@ jobs:
         run: |
           dotnet test src/ModelDock.Tests -c Release --logger "console;verbosity=normal" *> test.log
           $code = $LASTEXITCODE
-          Get-Content test.log -Tail 20
+          if ($code -ne 0) {
+            # 失败时把每条失败用例和报错都打出来；只回显最后几行不够定位。
+            Select-String -Path test.log -Pattern '^\s*(Failed |Error Message:)' -Context 0,5 | ForEach-Object { $_.ToString() }
+            Get-Content test.log -Tail 40
+          } else {
+            Get-Content test.log -Tail 5
+          }
           exit $code
+
+      - name: Keep the test log when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test.log
+          retention-days: 7
 
       - name: Publish local sidecar
         shell: pwsh
