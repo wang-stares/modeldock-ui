@@ -9,6 +9,14 @@ on:
         description: '私有库分支或标签'
         required: true
         default: 'main'
+      promote_version:
+        description: '转正后的正式版本号（如 3.13.0）；留空表示按 ref 自身版本构建'
+        required: false
+        default: ''
+      delta_base:
+        description: '增量基线版本（如 3.12.1）；留空则按最近标签推断'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -32,6 +40,25 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Apply promotion version
+        if: inputs.promote_version != ''
+        shell: pwsh
+        run: |
+          python scripts/bump-version.py "${{ inputs.promote_version }}"
+          $tag = '${{ inputs.ref }}'.TrimStart('v')
+          $stableNotes = "release-notes/${{ inputs.promote_version }}.md"
+          python scripts/merge-release-notes.py "${{ inputs.promote_version }}" --write
+          if (-not (Test-Path -LiteralPath $stableNotes)) {
+            $betaNotes = "release-notes/$tag.md"
+            if (Test-Path -LiteralPath $betaNotes) { Copy-Item -LiteralPath $betaNotes -Destination $stableNotes -Force }
+          }
+          python scripts/promote_changelog.py "${{ inputs.promote_version }}" "$tag"
+          python scripts/promote_notes.py $stableNotes "${{ inputs.promote_version }}" "$tag"
+          $body = Get-Content -LiteralPath $stableNotes -Raw -Encoding UTF8
+          if ($body -match '(?i)beta|rc\.') { throw "正式版公告里仍有 beta/rc 字样，已中止：$stableNotes" }
+          python scripts/generate-release-history.py
+          Write-Host "已把版本改写为 ${{ inputs.promote_version }}"
 
       - name: Read version
         id: v
@@ -80,7 +107,6 @@ jobs:
 
       - name: Test core
         shell: pwsh
-        continue-on-error: true
         run: |
           dotnet test src/ModelDock.Tests -c Release --logger "console;verbosity=normal" *> test.log
           $code = $LASTEXITCODE
@@ -165,6 +191,13 @@ jobs:
           $readme | Out-File -FilePath (Join-Path $stage 'README.txt') -Encoding utf8
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path 'out' "Tianshu-$version-win64.zip") -Force
 
+      - name: Verify release hardening
+        shell: pwsh
+        run: |
+          $version = "${{ steps.v.outputs.version }}"
+          pwsh scripts/verify-release-hardening.ps1 -Path @("out/Tianshu-$version-win64.zip")
+          if ($LASTEXITCODE -ne 0) { throw '发布硬化检查未通过' }
+
       - name: Build chain delta
         shell: pwsh
         run: |
@@ -174,12 +207,14 @@ jobs:
           New-Item -ItemType Directory -Path 'delta/new' -Force | Out-Null
           Expand-Archive -LiteralPath "out/Tianshu-$version-win64.zip" -DestinationPath 'delta/new' -Force
 
-          $prevVersion = ''
-          foreach ($tag in @(git tag --sort=-creatordate)) {
-            $candidate = $tag.TrimStart('v')
-            if ($candidate -eq $version) { continue }
-            $prevVersion = $candidate
-            break
+          $prevVersion = '${{ inputs.delta_base }}'
+          if ($prevVersion -eq '') {
+            foreach ($tag in @(git tag --sort=-creatordate)) {
+              $candidate = $tag.TrimStart('v')
+              if ($candidate -eq $version) { continue }
+              $prevVersion = $candidate
+              break
+            }
           }
 
           $prevChain = ''
@@ -267,4 +302,5 @@ jobs:
             out/SHA256SUMS.txt.sig
             out/Tianshu-chain.json.gz
             out/Tianshu-delta-*.json.gz
+            release-notes/${{ steps.v.outputs.version }}.md
           retention-days: 7
