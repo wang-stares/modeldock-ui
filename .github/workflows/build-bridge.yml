@@ -1,20 +1,26 @@
-name: Build bridge (temporary)
+name: Build bridge
 
-# 临时构建桥：账号的私有库 Actions 额度被账单拦住时，用公开仓库的免费额度构建。
-# 源码只读检出私有库（部署密钥），日志与产物都不含源码；额度恢复后删除本文件。
+# 构建桥：私有库 Actions 额度被账单拦住时，用公开仓库的免费额度构建。
+#
+# 这个文件刻意只做四件事：检出源码、装工具链、调用源码仓库里的构建入口、上传产物。
+# 发版步骤的细节——用哪些脚本、什么顺序、运行时取哪个构建、怎么硬化怎么签名——全部在源码
+# 仓库自己的构建脚本里，不写在这里：公开仓库的 workflow 不该把内部结构与发布流程摊开给人看。
+# 要改构建步骤，改源码仓库那个入口脚本，不要往这个文件里加 run 块。
+# 额度恢复后删除本文件。
+
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: '私有库分支或标签'
+        description: '要构建的分支或标签'
         required: true
         default: 'main'
       promote_version:
-        description: '转正后的正式版本号（如 3.13.0）；留空表示按 ref 自身版本构建'
+        description: '转正后的正式版本号（如 3.13.0）；留空按 ref 自身版本构建'
         required: false
         default: ''
       delta_base:
-        description: '增量基线版本（如 3.12.1）；留空则按最近标签推断'
+        description: '增量基线版本（如 3.12.1）；留空按最近标签推断'
         required: false
         default: ''
 
@@ -28,48 +34,23 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
-      LLAMA_BUILD: b12428
       PYTHONIOENCODING: utf-8
+      BRIDGE_REF: ${{ inputs.ref }}
+      BRIDGE_PROMOTE_VERSION: ${{ inputs.promote_version }}
+      BRIDGE_DELTA_BASE: ${{ inputs.delta_base }}
+      UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
     steps:
-      - name: Checkout private source (read-only)
+      # 源码仓库由仓库变量给出，不写死在这个文件里；只读部署密钥，日志与产物都不含源码。
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
-          repository: wang-stares/modeldock
+          repository: ${{ vars.BRIDGE_SOURCE_REPO }}
           ref: ${{ inputs.ref }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Apply promotion version
-        if: inputs.promote_version != ''
-        shell: pwsh
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          python scripts/bump-version.py "${{ inputs.promote_version }}"
-          $tag = '${{ inputs.ref }}'.TrimStart('v')
-          $stableNotes = "release-notes/${{ inputs.promote_version }}.md"
-          python scripts/merge-release-notes.py "${{ inputs.promote_version }}" --write
-          if (-not (Test-Path -LiteralPath $stableNotes)) {
-            $betaNotes = "release-notes/$tag.md"
-            if (Test-Path -LiteralPath $betaNotes) { Copy-Item -LiteralPath $betaNotes -Destination $stableNotes -Force }
-          }
-          python scripts/promote_changelog.py "${{ inputs.promote_version }}" "$tag"
-          python scripts/promote_notes.py $stableNotes "${{ inputs.promote_version }}" "$tag"
-          $body = Get-Content -LiteralPath $stableNotes -Raw -Encoding UTF8
-          if ($body -match '(?i)beta|rc\.') { throw "正式版公告里仍有 beta/rc 字样，已中止：$stableNotes" }
-          python scripts/generate-release-history.py
-          Write-Host "已把版本改写为 ${{ inputs.promote_version }}"
-
-      - name: Read version
-        id: v
-        shell: pwsh
-        run: |
-          $version = (Get-Content VERSION -Raw -Encoding UTF8).Trim()
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "version=$version"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -85,239 +66,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            ui/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Cache Rust
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: 'src-tauri -> target'
 
-      - name: Install frontend dependencies
+      - name: Build
         shell: pwsh
-        run: |
-          npm ci --no-audit --no-fund
-          npm --prefix ui ci --no-audit --no-fund
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/bridge.ps1
 
-      - name: Build React UI
-        shell: pwsh
-        run: npm --prefix ui run build
-
-      - name: Test core
-        shell: pwsh
-        run: |
-          dotnet test src/ModelDock.Tests -c Release --logger "console;verbosity=normal" *> test.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            # 失败时把每条失败用例和报错都打出来；只回显最后几行不够定位。
-            Select-String -Path test.log -Pattern '^\s*(Failed |Error Message:)' -Context 0,5 | ForEach-Object { $_.ToString() }
-            Get-Content test.log -Tail 40
-          } else {
-            Get-Content test.log -Tail 5
-          }
-          exit $code
-
-      - name: Keep the test log when it fails
+      - name: Keep the build log when it fails
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-log
+          name: bridge-test-log
           path: test.log
           retention-days: 7
-
-      - name: Publish local sidecar
-        shell: pwsh
-        run: |
-          $out = Join-Path $env:GITHUB_WORKSPACE 'out\server'
-          dotnet publish src/ModelDock.Server/ModelDock.Server.csproj `
-            -c Release -r win-x64 --self-contained true `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:PublishReadyToRun=true `
-            -p:DebugType=None `
-            -p:DebugSymbols=false `
-            -p:CopyOutputSymbolsToPublishDirectory=false `
-            -p:Version=${{ steps.v.outputs.version }} `
-            -o $out
-          if ($LASTEXITCODE -ne 0) { throw 'sidecar publish failed' }
-          $exe = Join-Path $out 'ModelDock.Server.exe'
-          if (-not (Test-Path -LiteralPath $exe)) { throw 'ModelDock.Server.exe missing' }
-          New-Item -ItemType Directory -Path 'src-tauri\binaries' -Force | Out-Null
-          Copy-Item -LiteralPath $exe -Destination 'src-tauri\binaries\ModelDock.Server.exe' -Force
-
-      - name: Fetch llama.cpp runtime
-        shell: pwsh
-        run: |
-          $build = $env:LLAMA_BUILD
-          $zip = "llama-$build-bin-win-cpu-x64.zip"
-          $url = "https://github.com/ggml-org/llama.cpp/releases/download/$build/$zip"
-          $dest = 'src-tauri\binaries\runtime\llama'
-          New-Item -ItemType Directory -Path $dest -Force | Out-Null
-          $zipPath = Join-Path $env:RUNNER_TEMP $zip
-          Invoke-WebRequest -Uri $url -OutFile $zipPath
-          $raw = Join-Path $env:RUNNER_TEMP "llama-raw"
-          if (Test-Path -LiteralPath $raw) { Remove-Item -LiteralPath $raw -Recurse -Force }
-          Expand-Archive -LiteralPath $zipPath -DestinationPath $raw -Force
-          Get-ChildItem -LiteralPath $raw -File | Where-Object {
-            $_.Name -eq 'llama-server.exe' -or
-            $_.Name -eq 'llama-server-impl.dll' -or
-            $_.Name -eq 'llama-common.dll' -or
-            $_.Name -eq 'llama.dll' -or
-            $_.Name -eq 'mtmd.dll' -or
-            $_.Name -eq 'libomp.dll' -or
-            $_.Name -like 'ggml*.dll' -or
-            $_.Name -like 'LICENSE*'
-          } | Copy-Item -Destination $dest -Force
-          foreach ($dll in @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll')) {
-            $source = Join-Path $env:SystemRoot ("System32\" + $dll)
-            if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $dest -Force }
-          }
-          Copy-Item -LiteralPath 'docs/licenses/llama.cpp-MIT.txt' -Destination (Join-Path $dest 'LICENSE-llama.cpp.txt') -Force
-          if (-not (Test-Path -LiteralPath (Join-Path $dest 'llama-server.exe'))) { throw "没有拿到 llama-server.exe：$url" }
-
-      - name: Build Tauri app
-        shell: pwsh
-        run: npx tauri build --bundles nsis
-
-      - name: Package artifacts
-        shell: pwsh
-        run: |
-          $version = "${{ steps.v.outputs.version }}"
-          $installer = Get-ChildItem 'src-tauri\target\release\bundle\nsis' -Filter '*setup.exe' -File | Select-Object -First 1
-          if (-not $installer) { throw '找不到 NSIS 安装包' }
-          New-Item -ItemType Directory -Path 'out' -Force | Out-Null
-          Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path 'out' "Tianshu-Setup-$version-x64.exe") -Force
-          $stage = 'out\portable'
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item -LiteralPath 'src-tauri\target\release\Tianshu.exe' -Destination (Join-Path $stage 'Tianshu.exe') -Force
-          Copy-Item -LiteralPath 'src-tauri\binaries\ModelDock.Server.exe' -Destination (Join-Path $stage 'ModelDock.Server.exe') -Force
-          Copy-Item -LiteralPath 'src-tauri\binaries\runtime' -Destination (Join-Path $stage 'runtime') -Recurse -Force
-          $loader = 'src-tauri\target\release\WebView2Loader.dll'
-          if (Test-Path -LiteralPath $loader) { Copy-Item -LiteralPath $loader -Destination $stage -Force }
-          $readme = @(
-            '天枢 ' + $version,
-            '',
-            '双击 Tianshu.exe 启动。ModelDock.Server.exe 是本地推理/下载内核，runtime\llama 是内置 llama.cpp。',
-            '数据目录：%APPDATA%\ModelDock（模型、会话与偏好）。'
-          ) -join "`r`n"
-          $readme | Out-File -FilePath (Join-Path $stage 'README.txt') -Encoding utf8
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path 'out' "Tianshu-$version-win64.zip") -Force
-
-      - name: Verify release hardening
-        shell: pwsh
-        run: |
-          $version = "${{ steps.v.outputs.version }}"
-          pwsh scripts/verify-release-hardening.ps1 -Path @("out/Tianshu-$version-win64.zip")
-          if ($LASTEXITCODE -ne 0) { throw '发布硬化检查未通过' }
-
-      - name: Build chain delta
-        shell: pwsh
-        run: |
-          $version = "${{ steps.v.outputs.version }}"
-          # 一个 Release 只带一条“上一版 -> 这一版”的增量，链条顺着发布顺序往下走。
-          python -m pip install --quiet bsdiff4
-          New-Item -ItemType Directory -Path 'delta/new' -Force | Out-Null
-          Expand-Archive -LiteralPath "out/Tianshu-$version-win64.zip" -DestinationPath 'delta/new' -Force
-
-          $prevVersion = '${{ inputs.delta_base }}'
-          if ($prevVersion -eq '') {
-            foreach ($tag in @(git tag --sort=-creatordate)) {
-              $candidate = $tag.TrimStart('v')
-              if ($candidate -eq $version) { continue }
-              $prevVersion = $candidate
-              break
-            }
-          }
-
-          $prevChain = ''
-          if ($prevVersion -ne '') {
-            $dir = Join-Path 'delta/base' $prevVersion
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            $url = "https://github.com/wang-stares/modeldock-ui/releases/download/v$prevVersion/Tianshu-$prevVersion-win64.zip"
-            try {
-              Invoke-WebRequest -Uri $url -OutFile (Join-Path $dir "Tianshu-$prevVersion-win64.zip")
-              Expand-Archive -LiteralPath (Join-Path $dir "Tianshu-$prevVersion-win64.zip") -DestinationPath $dir -Force
-            } catch {
-              Write-Warning "基线 $prevVersion 下载失败：$($_.Exception.Message)"
-              $prevVersion = ''
-            }
-          }
-
-          New-Item -ItemType Directory -Path 'delta/chain' -Force | Out-Null
-          if ($prevVersion -ne '') {
-            $chainUrl = "https://github.com/wang-stares/modeldock-ui/releases/download/v$prevVersion/Tianshu-chain.json.gz"
-            try {
-              Invoke-WebRequest -Uri $chainUrl -OutFile 'delta/chain/Tianshu-chain.json.gz'
-              $prevChain = 'delta/chain/Tianshu-chain.json.gz'
-            } catch { Write-Host '上一版还没有链条索引，本版从这一步开始。' }
-          }
-
-          if ($prevVersion -eq '') {
-            python scripts/build-chain.py '-' '-' '' '' '' 0 'out/Tianshu-chain.json.gz'
-            Write-Host '没有可用基线，本版只带空链条。'
-            exit 0
-          }
-
-          $name = "Tianshu-delta-$prevVersion-to-$version.json.gz"
-          python scripts/make-delta.py (Join-Path 'delta/base' $prevVersion) 'delta/new' $prevVersion $version "out/$name"
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "out/$name")) { throw '增量生成失败' }
-          $sha = (Get-FileHash -LiteralPath "out/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
-          $size = (Get-Item -LiteralPath "out/$name").Length
-          python scripts/build-chain.py $prevChain $name $prevVersion $version $sha $size 'out/Tianshu-chain.json.gz'
-          if ($LASTEXITCODE -ne 0) { throw '链条索引生成失败' }
-          Write-Host "增量：$name（$([math]::Round($size / 1MB, 1)) MB）"
-
-      - name: Checksums and signature
-        shell: pwsh
-        env:
-          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-        run: |
-          $version = "${{ steps.v.outputs.version }}"
-          $names = @("Tianshu-$version-win64.zip", "Tianshu-Setup-$version-x64.exe", "Tianshu-chain.json.gz")
-          $lines = @()
-          foreach ($name in $names) {
-            $path = Join-Path 'out' $name
-            if (Test-Path -LiteralPath $path) {
-              $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
-              $lines += "$sha  $name"
-            }
-          }
-          $deltas = @(Get-ChildItem -Path 'out' -Filter 'Tianshu-delta-*.json.gz' -ErrorAction SilentlyContinue | Sort-Object Name)
-          foreach ($delta in $deltas) {
-            $sha = (Get-FileHash -LiteralPath $delta.FullName -Algorithm SHA256).Hash
-            $lines += "$sha  $($delta.Name)"
-          }
-          $lines | Out-File -FilePath out/SHA256SUMS.txt -Encoding utf8
-          Get-Content out/SHA256SUMS.txt
-
-          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)) {
-            Write-Warning 'UPDATE_SIGNING_KEY 未配置，本次不生成更新签名。'
-            exit 0
-          }
-          $pem = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:UPDATE_SIGNING_KEY))
-          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
-          $ecdsa.ImportFromPem($pem)
-          $bytes = [IO.File]::ReadAllBytes('out/SHA256SUMS.txt')
-          $sig = $ecdsa.SignData($bytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
-          [IO.File]::WriteAllText('out/SHA256SUMS.txt.sig', [Convert]::ToBase64String($sig))
-          $ecdsa.Dispose()
-          Write-Host 'SHA256SUMS.txt.sig 已生成'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tianshu-${{ steps.v.outputs.version }}
-          path: |
-            out/Tianshu-Setup-*.exe
-            out/Tianshu-*-win64.zip
-            out/SHA256SUMS.txt
-            out/SHA256SUMS.txt.sig
-            out/Tianshu-chain.json.gz
-            out/Tianshu-delta-*.json.gz
-            release-notes/${{ steps.v.outputs.version }}.md
+          name: bridge-out-${{ inputs.ref }}
+          path: out/**
           retention-days: 7

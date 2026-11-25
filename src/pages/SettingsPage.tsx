@@ -1097,7 +1097,7 @@ function UpdateSettings({ channel }: { channel: 'stable' | 'beta' }) {
           <div className="release-version">v{shownVersion}</div>
           <div className="release-hero-title">{current?.title ?? '版本公告'}</div>
           <div className="release-meta">
-            {current ? `${current.date} · 当前版本` : 'CHANGELOG.md 里没有当前版本公告'}
+            {current ? `${current.date} · 当前版本` : '本版本暂无公告记录'}
           </div>
         </div>
         <div className="release-current-body">
