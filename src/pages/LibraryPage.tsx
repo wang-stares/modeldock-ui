@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownToLine, ChevronRight, Cpu, Loader2, RefreshCw, Search, Sparkles, X } from 'lucide-react'
 import { api } from '../api'
 import { HardwarePopover } from '../components/HardwarePopover'
@@ -56,6 +56,8 @@ export function LibraryPage({ hardware, onHardware, jobs, toast }: {
 }) {
   const [mode, setMode] = useState<'recommend' | 'all'>('recommend')
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
+  // 后台校准的序号：只让最后一次 loadRecommend 发起的校准生效。
+  const refineSeq = useRef(0)
   const [models, setModels] = useState<CatalogModel[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -87,6 +89,16 @@ export function LibraryPage({ hardware, onHardware, jobs, toast }: {
     try {
       const data = await api.recommend()
       setRecommendations(data)
+      // 首屏只按文件大小估；GGUF 头里的层数/KV 头数要真去读，读到后按 key 替换对应卡，慢也不挡首屏。
+      // 校准期间用户又点了重新拉取/切来源时，旧校准结果直接丢掉，别把上一轮的口径盖回来。
+      const seq = ++refineSeq.current
+      void api.refine().then(refined => {
+        if (seq !== refineSeq.current || !refined.length) return
+        setRecommendations(prev => {
+          const byKey = new Map(refined.map(item => [item.model.key, item]))
+          return prev.map(item => byKey.get(item.model.key) ?? item)
+        })
+      }).catch(() => { /* 校准失败就保持旧口径，不弹错 */ })
     } catch (e) {
       setWarning(e instanceof Error ? e.message : '模型来源暂时不可用')
     } finally { setLoading(false) }

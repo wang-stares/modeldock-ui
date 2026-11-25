@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Waves } from 'lucide-react'
-import { api } from '../api'
-import { releaseHistory, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
+import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Trash2, Waves } from 'lucide-react'
+import { api, getRuntimeVersion } from '../api'
+import { releaseHistory, releaseHistoryStable, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
 import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState, UpdateCheck, UpdateOutcome } from '../types'
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
@@ -500,14 +500,22 @@ function VersionUpdateSettings({ settings, onChange }: {
 }) {
   const [check, setCheck] = useState<UpdateCheck | null>(null)
   const [checking, setChecking] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null)
-  const { download, busy, installing, start, pause, install, reveal, percent } = useUpdateDownload(setNotice)
+  // 被「忽略此版本」跳过的版本号：存本地，这里给它一个看得见、能撤销的入口。
+  const [skippedVersion, setSkippedVersion] = useState(() => {
+    try { return localStorage.getItem('stardock.update.skipped') ?? '' } catch { return '' }
+  })
+  const { download, busy, installing, blocked, portableBlocked, start, pause, install, reveal, percent } = useUpdateDownload(setNotice)
   const [confirming, setConfirming] = useState(false)
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const paused = download?.state === 'paused'
   const ready = download?.state === 'ready'
+  const runtimeVersion = getRuntimeVersion()
+  const shownVersion = runtimeVersion || APP_VERSION
+  const versionMismatch = !!runtimeVersion && runtimeVersion !== APP_VERSION
 
   useEffect(() => {
     let alive = true
@@ -530,7 +538,39 @@ function VersionUpdateSettings({ settings, onChange }: {
     return () => { alive = false }
   }, [])
 
-  async function runCheck() {
+  // 换回正式版要用户点头：这里存的是「等他决定」的那个正式版号，空串表示没有在问。
+  const [stepBack, setStepBack] = useState('')
+  async function switchChannel() {
+    const next = settings.updateChannel === 'beta' ? 'stable' : 'beta'
+    onChange({ updateChannel: next })
+    setStepBack('')
+    // 服务端按设置里的通道取数，而设置是异步落盘的：等这次保存完成再检查，免得拿到另一条通道的缓存。
+    const saved = await api.saveSettings({ ...settings, updateChannel: next }).catch(() => null)
+    const result = await runCheck()
+    // 从测试版切回正式版时，最新的正式版可能比当前的低。普通检查不会主动提出往回装，所以在这里问一次。
+    if (saved && result && next === 'stable' && APP_VERSION.includes('-') &&
+        !result.available && !result.error && result.latestVersion) {
+      setStepBack(result.latestVersion)
+    }
+  }
+
+  async function confirmStepBack() {
+    const version = stepBack
+    setStepBack('')
+    setChecking(true)
+    try {
+      const { ok } = await api.allowUpdateStepBack(version)
+      if (!ok) {
+        setError('没能换回正式版：当前不是测试版，或者目标不是更低的正式版。')
+        return
+      }
+      await runCheck()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '操作失败')
+    } finally { setChecking(false) }
+  }
+
+  async function runCheck(): Promise<UpdateCheck | null> {
     setChecking(true)
     setError('')
     setNotice('')
@@ -539,13 +579,19 @@ function VersionUpdateSettings({ settings, onChange }: {
       setCheck(next)
       if (next.error) {
         setError(next.error)
+      } else if (next.downgrade) {
+        setNotice(`可以换回正式版 v${next.latestVersion}（比当前的测试版低），可以开始下载。`)
       } else if (next.available) {
         setNotice(`发现新版本 v${next.latestVersion}${next.forced ? '（必须升级）' : ''}，可以开始下载。`)
+      } else if (next.rolloutPending) {
+        setNotice(`v${next.latestVersion} 正在灰度发布（当前覆盖 ${next.rolloutPercent}%），还没轮到这台，放量后会自动提示。`)
       } else {
         setNotice(`已是最新版本 v${next.currentVersion}（${formatClock(next.checkedAt)} 完成检查）`)
       }
+      return next
     } catch (e) {
       setError(e instanceof Error ? e.message : '检查更新失败')
+      return null
     } finally { setChecking(false) }
   }
 
@@ -554,6 +600,25 @@ function VersionUpdateSettings({ settings, onChange }: {
     void import('@tauri-apps/api/core')
       .then(({ invoke }) => invoke('open_url', { url }))
       .catch(() => { window.open(url, '_blank', 'noreferrer') })
+  }
+
+  async function cleanupCache() {
+    if (!window.confirm('删除已下载的安装包、增量包和检查缓存？不会影响模型、会话与设置。')) return
+    setCleaning(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await api.cleanupUpdate()
+      setCheck(null)
+      await runCheck()
+      if (result.failed.length > 0) {
+        setNotice(`已清理 ${result.removed} 个文件、释放 ${formatBytes(result.freedBytes)}；有 ${result.failed.length} 个文件被占用，关闭应用后再清理一次。`)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '清理更新缓存失败')
+    } finally {
+      setCleaning(false)
+    }
   }
 
   async function copyDiagnostics() {
@@ -592,17 +657,6 @@ function VersionUpdateSettings({ settings, onChange }: {
 
         <div className="setting-row">
           <div className="setting-copy">
-            <div className="setting-name">更新通道</div>
-            <div className="setting-desc">正式版只收稳定发布；测试版会提前收到 vX.Y.Z-beta.N 的预发布，可能不稳定，只建议愿意帮忙验证时开启。</div>
-          </div>
-          <div className="segmented" role="group" aria-label="更新通道">
-            <button type="button" className={settings.updateChannel === 'stable' ? 'active' : ''} onClick={() => onChange({ updateChannel: 'stable' })}>正式版</button>
-            <button type="button" className={settings.updateChannel === 'beta' ? 'active' : ''} onClick={() => onChange({ updateChannel: 'beta' })}>测试版</button>
-          </div>
-        </div>
-
-        <div className="setting-row">
-          <div className="setting-copy">
             <div className="setting-name">发现新版本时自动下载</div>
             <div className="setting-desc">默认开启：在应用运行时就把安装包下好并校验，你只需要在方便的时候重启完成升级；关闭后改为手动点“下载”。</div>
           </div>
@@ -637,6 +691,27 @@ function VersionUpdateSettings({ settings, onChange }: {
 
         <div className="setting-row">
           <div className="setting-copy">
+            <div className="setting-name">接收测试版更新</div>
+            <div className="setting-desc">
+              {settings.updateChannel === 'beta'
+                ? '已开启：检测测试版和正式版里最高的那个。关掉就只检测正式版；如果正式版比当前的测试版低，会问一次是否换回。'
+                : '已关闭：只检测正式版。开启后会检测到版本号带 beta 的测试版，可能不够稳定。切换后立即重新检查。'}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.updateChannel === 'beta'}
+            aria-label="接收测试版更新"
+            className={`source-switch ${settings.updateChannel === 'beta' ? 'on' : ''}`}
+            onClick={() => void switchChannel()}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
             <div className="setting-name">退出应用时自动安装</div>
             <div className="setting-desc">默认开启：安装包已下好并校验通过时，从托盘菜单“退出”会先装完再退出，下次打开就是新版；关闭后只在点“重启并升级”时安装。</div>
           </div>
@@ -649,6 +724,16 @@ function VersionUpdateSettings({ settings, onChange }: {
             onClick={() => onChange({ autoInstallOnQuit: !settings.autoInstallOnQuit })}
           >
             <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">清理更新缓存</div>
+            <div className="setting-desc">删除已下载的安装包、增量包与检查缓存，释放磁盘空间；不会动模型、会话和设置。</div>
+          </div>
+          <button type="button" className="btn ghost sm" disabled={cleaning} onClick={() => void cleanupCache()}>
+            <Trash2 aria-hidden />{cleaning ? '清理中…' : '清理'}
           </button>
         </div>
 
@@ -672,22 +757,55 @@ function VersionUpdateSettings({ settings, onChange }: {
                   : `升级到 v${outcome.version} 没有生效：${outcome.reason}`}
               </div>
             </div>
-            <span className="chip">{outcome.ok ? '成功' : '未完成'}</span>
+            {outcome.ok
+              ? <span className="chip">成功</span>
+              : <button type="button" className="btn ghost sm" disabled={busy} onClick={() => void start()}>重新下载</button>}
           </div>
         )}
 
         <div className="setting-row">
           <div className="setting-copy">
-            <div className="setting-name">当前版本 v{APP_VERSION}</div>
+            <div className="setting-name">当前版本 v{shownVersion}</div>
             <div className="setting-desc">
               检查对象是公开仓库的 releases/latest；只读取版本号、公告与资产列表，不上报本机信息。
+              {check?.forced && check.available ? ' 这一版是最低版本要求，必须升级后继续使用。' : ''}
             </div>
           </div>
           <button type="button" className="btn ghost sm" disabled={checking} onClick={() => void runCheck()}>
             <RefreshCw aria-hidden />{checking ? '检查中…' : '立即检查'}
           </button>
         </div>
+
+        {skippedVersion && (
+          <div className="setting-row">
+            <div className="setting-copy">
+              <div className="setting-name">已忽略 v{skippedVersion}</div>
+              <div className="setting-desc">这一版不会再弹更新横幅。清除后，下次检查会重新提示。</div>
+            </div>
+            <button
+              type="button"
+              className="btn ghost sm"
+              onClick={() => {
+                try {
+                  localStorage.removeItem('stardock.update.skipped')
+                  localStorage.removeItem('stardock.update.snooze')
+                } catch { /* 隐私模式忽略 */ }
+                setSkippedVersion('')
+                setNotice('已清除忽略记录，下次检查会重新提示这一版')
+              }}
+            >
+              <Trash2 aria-hidden />清除
+            </button>
+          </div>
+        )}
       </section>
+
+      {versionMismatch && (
+        <div className="settings-callout update-error-line">
+          <AlertCircle size={14} aria-hidden />
+          界面组件 v{APP_VERSION} 与后台内核 v{runtimeVersion} 不一致，安装可能不完整。请下载完整安装包覆盖安装，避免增量补丁对不上。
+        </div>
+      )}
 
       {error && (
         <div className="settings-callout update-error-line">
@@ -707,11 +825,35 @@ function VersionUpdateSettings({ settings, onChange }: {
         </section>
       )}
 
+      {stepBack && (
+        <section className="settings-card settings-detail-card">
+          <div className="setting-row">
+            <div className="setting-copy">
+              <div className="setting-name">换回正式版 v{stepBack}？</div>
+              <div className="setting-desc">
+                它比当前的测试版 v{APP_VERSION} 低。换回会安装这个正式版并需要重启一次，用的是完整安装包，免安装版需要手动下载正式版覆盖。
+                不换就留在当前版本，不会再自动提示，除非重新切换上面的开关。
+              </div>
+            </div>
+            <button type="button" className="btn primary sm" disabled={checking} onClick={() => void confirmStepBack()}>
+              换回正式版
+            </button>
+            <button type="button" className="btn ghost sm" onClick={() => setStepBack('')}>
+              留在当前版本
+            </button>
+          </div>
+        </section>
+      )}
+
       {check && check.available && (
         <section className="settings-card settings-detail-card update-result">
           <div className="update-result-head">
             <div>
-              <div className="setting-name">发现新版本 v{check.latestVersion}</div>
+              <div className="setting-name">
+                {check.downgrade
+                  ? `换回正式版 v${check.latestVersion}`
+                  : `发现新版本 v${check.latestVersion}${check.latestVersion.includes('-') ? ' · 测试版' : ''}`}
+              </div>
               <div className="setting-desc">
                 {check.releaseName || `v${check.latestVersion}`}{check.publishedAt ? ` · ${formatReleaseDate(check.publishedAt)} 发布` : ''}
               </div>
@@ -739,7 +881,19 @@ function VersionUpdateSettings({ settings, onChange }: {
               </div>
             </div>
             <div className="update-asset-actions">
-              {ready ? (
+              {ready && blocked ? (
+                <>
+                  {/* 被拒后主按钮不能再是“重启并升级”：点了只会原样再被拒一次。 */}
+                  {portableBlocked && (
+                    <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install(true)}>
+                      <RefreshCw aria-hidden />重试增量升级
+                    </button>
+                  )}
+                  <button type="button" className={portableBlocked ? 'btn ghost sm' : 'btn primary sm'} onClick={() => void reveal()}>
+                    <FolderOpen aria-hidden />打开文件夹手动装
+                  </button>
+                </>
+              ) : ready ? (
                 <>
                   <button type="button" className="btn primary sm" disabled={busy} onClick={() => setConfirming(true)}>
                     <Check aria-hidden />重启并升级
@@ -770,11 +924,19 @@ function VersionUpdateSettings({ settings, onChange }: {
             </div>
           </div>
 
+          {blocked && <div className="update-inline-error">{blocked}</div>}
+
           {downloading && (
             <div className="update-progress">
               <div className="update-progress-bar"><span style={{ width: `${percent}%` }} /></div>
               <div className="update-progress-note">
-                {download?.state === 'verifying' ? '正在校验 SHA256…' : download?.receivedBytes ? `正在下载 ${percent}% · ${formatBytes(download?.receivedBytes ?? 0)}` : '正在连接下载地址…'}
+                {download?.state === 'verifying'
+                  ? '正在校验 SHA256…'
+                  : download?.stage === 'connect'
+                    ? `正在连接${download?.sourceHost ? ` ${download.sourceHost}${download.sourceCount && download.sourceCount > 1 ? `（第 ${download.sourceIndex}/${download.sourceCount} 个源）` : ''}` : '下载地址'}…`
+                    : download?.receivedBytes
+                      ? `正在下载 ${percent}% · ${formatBytes(download?.receivedBytes ?? 0)}${download?.sourceHost ? ` · 源 ${download.sourceHost}` : ''}`
+                      : '正在连接下载地址…'}
               </div>
             </div>
           )}
@@ -785,7 +947,7 @@ function VersionUpdateSettings({ settings, onChange }: {
 
           {ready && download && !download.verified && (
             <div className="settings-callout">
-              这一版没有取到 SHA256SUMS.txt 校验值，不会执行应用内升级；请在下载目录自行确认后再运行。
+              没有完成 SHA256SUMS.txt 校验：{download.checksumError || '校验文件不可用'}。不会执行应用内升级；请在下载目录自行确认后再运行。
             </div>
           )}
 
@@ -795,7 +957,7 @@ function VersionUpdateSettings({ settings, onChange }: {
             </div>
           )}
 
-          {confirming && !installing && (
+          {confirming && !installing && !blocked && (
             <div className="update-confirm">
               <div className="update-confirm-text">
                 升级会关闭当前窗口，并中断正在进行的模型下载（升级后可断点续传）。安装过程会弹一次系统权限确认。
@@ -902,25 +1064,37 @@ function ReleaseSections({ sections }: { sections: ReleaseNoteSection[] }) {
   )
 }
 
-function UpdateSettings() {
-  const current = releaseHistory
-    .flatMap(group => group.items)
-    .find(item => item.version === APP_VERSION)
-  const older = releaseHistory
+function UpdateSettings({ channel }: { channel: 'stable' | 'beta' }) {
+  // 正式通道读正式版口径（同号 beta 已合并进来）；测试通道读全部版本，测试版各占一条。
+  const history = channel === 'beta' ? releaseHistory : releaseHistoryStable
+  // 当前版本卡片也按通道取数：正式版通道下，3.15.0 这一条就是 beta.1 / beta.2 合并后的内容。
+  // 只有一种情况回退到全量数据——用户自己跑的就是测试版，本版公告必须能看。
+  const current =
+    history.flatMap(group => group.items).find(item => item.version === APP_VERSION)
+  const older = history
     .map(group => ({ ...group, items: group.items.filter(item => item.version !== APP_VERSION) }))
     .filter(group => group.items.length > 0)
   const historyCount = older.reduce((sum, group) => sum + group.items.length, 0)
   const currentCount = current ? releaseCount(current) : 0
+  const runtimeVersion = getRuntimeVersion()
+  const shownVersion = runtimeVersion || APP_VERSION
+  const versionMismatch = !!runtimeVersion && runtimeVersion !== APP_VERSION
 
   return (
     <>
+      {versionMismatch && (
+        <div className="settings-callout update-error-line">
+          <AlertCircle size={14} aria-hidden />
+          界面组件 v{APP_VERSION} 与后台内核 v{runtimeVersion} 不一致，安装可能不完整。请下载完整安装包覆盖安装，避免增量补丁对不上。
+        </div>
+      )}
       <section className="settings-card release-current">
         <div className="release-current-head">
           <div className="release-current-top">
             <span className="release-latest"><Megaphone size={12} /> 当前版本</span>
             <span className="release-status">本地离线更新</span>
           </div>
-          <div className="release-version">v{APP_VERSION}</div>
+          <div className="release-version">v{shownVersion}</div>
           <div className="release-hero-title">{current?.title ?? '版本公告'}</div>
           <div className="release-meta">
             {current ? `${current.date} · 当前版本` : 'CHANGELOG.md 里没有当前版本公告'}
@@ -1100,7 +1274,7 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
           {section === 'storage' && <StorageSettings hardware={hardware} />}
           {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} />}
           {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
-          {section === 'updates' && <UpdateSettings />}
+          {section === 'updates' && <UpdateSettings channel={settings.updateChannel} />}
         </div>
       </div>
     )

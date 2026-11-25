@@ -1,10 +1,17 @@
-import type { AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
+import type { AgentMemoryInfo, AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
 let config: ApiConfig = {
   baseUrl: (import.meta as any).env?.VITE_API_BASE ?? 'http://127.0.0.1:47821',
   token: (import.meta as any).env?.VITE_API_TOKEN ?? 'dev-token',
+}
+
+/** 后台内核上报的版本；与界面硬编码的 APP_VERSION 对不上说明安装不完整。 */
+let runtimeVersion = ''
+
+export function getRuntimeVersion(): string {
+  return runtimeVersion
 }
 
 export async function initApi(): Promise<ApiConfig> {
@@ -23,7 +30,13 @@ export async function initApi(): Promise<ApiConfig> {
   for (let attempt = 0; attempt < 24; attempt++) {
     try {
       const res = await fetch(config.baseUrl + '/api/health')
-      if (res.ok) return config
+      if (res.ok) {
+        try {
+          const body = await res.json() as { version?: string }
+          if (typeof body?.version === 'string') runtimeVersion = body.version
+        } catch { /* 健康检查响应异常时保持空，界面回退到 APP_VERSION */ }
+        return config
+      }
     } catch { /* sidecar still booting */ }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
@@ -55,6 +68,7 @@ export const api = {
   health: () => request<{ ok: boolean; version: string }>('/api/health'),
   hardware: () => request<HardwareProfile>('/api/hardware'),
   recommend: () => request<Recommendation[]>('/api/library/recommend'),
+  refine: () => request<Recommendation[]>('/api/library/refine', { method: 'POST' }),
   search: (query: string, page = 1, pageSize = 24) =>
     request<{ models: CatalogModel[]; warning: string }>(`/api/library/search?query=${encodeURIComponent(query)}&page=${page}&pageSize=${pageSize}`),
   variants: (key: string) => request<CatalogModel>('/api/library/variants', { method: 'POST', body: JSON.stringify({ key }) }),
@@ -75,6 +89,8 @@ export const api = {
   saveSource: (id: string, update: ModelSourceUpdate) =>
     request<ModelSourcesState>(`/api/sources/${id}`, { method: 'PUT', body: JSON.stringify(update) }),
   checkUpdate: (force = false) => request<UpdateCheck>(`/api/update/check${force ? '?force=true' : ''}`),
+  allowUpdateStepBack: (version: string) =>
+    request<{ ok: boolean }>('/api/update/step-back', { method: 'POST', body: JSON.stringify({ version }) }),
   updateDownload: () => request<UpdateDownload>('/api/update/download'),
   updateDiagnostics: () => request<{ channel: string; logPath: string; text: string }>('/api/update/diagnostics'),
   startUpdateDownload: () => request<UpdateDownload>('/api/update/download', { method: 'POST' }),
@@ -83,6 +99,7 @@ export const api = {
   applyUpdateDelta: (planPath: string, version: string) =>
     import('@tauri-apps/api/core').then(({ invoke }) => invoke('apply_delta_update', { planPath, version })),
   revealUpdate: () => request<{ ok: boolean }>('/api/update/reveal', { method: 'POST' }),
+  cleanupUpdate: () => request<{ removed: number; freedBytes: number; failed: string[] }>('/api/update/cleanup', { method: 'POST' }),
   updateInstallPrep: () => request<UpdateInstallPrep>('/api/update/install-prep'),
   pauseUpdateDownload: () => request<UpdateDownload>('/api/update/download/pause', { method: 'POST' }),
 }
@@ -131,4 +148,65 @@ export async function streamChat(
       onChunk(JSON.parse(payload) as StreamChunk)
     }
   }
+}
+
+export interface AgentStreamBody { sessionId: string; model: string; content: string; profile?: string; planOnly?: boolean }
+
+/** 任务代理的流：事件按顺序到达，界面只按 type 分派，不猜状态。 */
+export async function streamAgent(
+  body: AgentStreamBody,
+  onEvent: (event: import('./types').AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = new Headers({ 'Content-Type': 'application/json', 'X-Tianshu-Token': config.token })
+  const res = await fetch(config.baseUrl + '/api/agent/stream', { method: 'POST', headers, body: JSON.stringify(body), signal })
+  if (!res.ok || !res.body) throw new Error(await res.text().catch(() => '任务代理不可用'))
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const payload = trimmed.slice(5).trim()
+      if (!payload) continue
+      try {
+        onEvent(JSON.parse(payload) as import('./types').AgentEvent)
+      } catch { /* 单帧解析失败不影响后续帧 */ }
+    }
+  }
+}
+
+export interface AgentProfileInfo {
+  name: string
+  displayName: string
+  summary: string
+  maxRounds: number
+  maxToolCalls: number
+  maxMinutes: number
+}
+
+export interface AgentToolsInfo {
+  workspace: string
+  profile: string
+  displayName: string
+  profiles: AgentProfileInfo[]
+  tools: { name: string; kind: string; description: string }[]
+}
+
+export const agentApi = {
+  tools: (profile?: string) =>
+    request<AgentToolsInfo>('/api/agent/tools' + (profile ? `?profile=${encodeURIComponent(profile)}` : '')),
+  decide: (runId: string, callId: string, allow: boolean, scope: 'once' | 'session') =>
+    request<{ ok: boolean }>('/api/agent/decision', { method: 'POST', body: JSON.stringify({ runId, callId, allow, scope }) }),
+  cancel: (runId: string) => request<{ ok: boolean }>(`/api/agent/runs/${runId}/cancel`, { method: 'POST' }),
+  memory: () => request<AgentMemoryInfo>('/api/agent/memory'),
+  forgetSession: (key: string) => request<{ ok: boolean }>(`/api/agent/memory/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  forgetNote: (scope: 'workspace' | 'global', text: string) =>
+    request<{ ok: boolean }>(`/api/agent/memory/notes?scope=${scope}&text=${encodeURIComponent(text)}`, { method: 'DELETE' }),
 }

@@ -1,10 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { BrandMark } from './BrandMark'
 import { WindowControls } from './WindowControls'
 import { APP_VERSION } from '../version'
 
 export type LaunchPhase = 'connect' | 'probe' | 'ready' | 'error'
+
+/**
+ * 启动页时间线（毫秒，从挂载算起），与 launch.css 里的动画延迟一一对应：
+ * 0.00s 星野与星云浮现 → 0.20s 流星划过 → 0.12s 星芒点亮 → 0.24s 强光炸开
+ * 0.30s 三条轨道展开并开始缓慢旋转，0.35s 起八道流光向中心汇聚
+ * 0.70s 字标逐字浮起 → 1.20s 副标与说明 → 1.50s 进度条
+ *
+ * 入场走完（2.1s）之前不允许收场，满 3.0s 且内核就绪后再停 0.6s 展示「准备完成」，
+ * 最后 0.64s 收场。冷启动 sidecar 慢时继续按真实进度等待，不提前收场。
+ */
+const INTRO_MS = 2100
+const MIN_VISIBLE_MS = 3000
+const READY_HOLD_MS = 600
+const EXIT_MS = 640
+
+const REDUCED_INTRO_MS = 240
+const REDUCED_MIN_VISIBLE_MS = 420
+const REDUCED_HOLD_MS = 60
+const REDUCED_EXIT_MS = 120
 
 const STAGES: Record<LaunchPhase, { percent: number; label: string; note: string }> = {
   connect: {
@@ -28,6 +48,18 @@ const STAGES: Record<LaunchPhase, { percent: number; label: string; note: string
   },
 }
 
+/** 汇聚的流光：起点相对舞台中心的偏移，延迟错开，最后在星芒处收束。 */
+const SPARKS: Array<{ x: string; y: string; delay: number }> = [
+  { x: '-46vw', y: '-30vh', delay: 300 },
+  { x: '48vw', y: '-26vh', delay: 420 },
+  { x: '-54vw', y: '6vh', delay: 480 },
+  { x: '44vw', y: '28vh', delay: 360 },
+  { x: '-28vw', y: '40vh', delay: 560 },
+  { x: '58vw', y: '-4vh', delay: 620 },
+  { x: '-16vw', y: '-46vh', delay: 700 },
+  { x: '20vw', y: '44vh', delay: 780 },
+]
+
 export function SplashScreen({ phase, error, onRetry, onDone }: {
   phase: LaunchPhase
   error: string
@@ -39,21 +71,30 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
     [],
   )
   const [introDone, setIntroDone] = useState(false)
+  const [minElapsed, setMinElapsed] = useState(false)
   const [skipped, setSkipped] = useState(false)
   const [closing, setClosing] = useState(false)
   const finished = useRef(false)
   const retryRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIntroDone(true), reduced ? 320 : 1180)
-    return () => window.clearTimeout(timer)
+    const intro = window.setTimeout(() => setIntroDone(true), reduced ? REDUCED_INTRO_MS : INTRO_MS)
+    const gate = window.setTimeout(() => setMinElapsed(true), reduced ? REDUCED_MIN_VISIBLE_MS : MIN_VISIBLE_MS)
+    return () => {
+      window.clearTimeout(intro)
+      window.clearTimeout(gate)
+    }
   }, [reduced])
 
   useEffect(() => {
-    if (!introDone || phase !== 'ready') return
-    const timer = window.setTimeout(() => setClosing(true), reduced ? 40 : 200)
+    if (phase !== 'ready') return
+    if (!skipped && (!introDone || !minElapsed)) return
+    const delay = skipped
+      ? (reduced ? 40 : 120)
+      : (reduced ? REDUCED_HOLD_MS : READY_HOLD_MS)
+    const timer = window.setTimeout(() => setClosing(true), delay)
     return () => window.clearTimeout(timer)
-  }, [introDone, phase, reduced])
+  }, [phase, introDone, minElapsed, skipped, reduced])
 
   useEffect(() => {
     if (!closing) return
@@ -61,24 +102,25 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
       if (finished.current) return
       finished.current = true
       onDone()
-    }, reduced ? 90 : 520)
+    }, reduced ? REDUCED_EXIT_MS : EXIT_MS)
     return () => window.clearTimeout(timer)
   }, [closing, onDone, reduced])
+
+  const skip = useCallback(() => {
+    setSkipped(true)
+    setIntroDone(true)
+    setMinElapsed(true)
+  }, [])
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'Escape' || phase === 'error') return
       event.preventDefault()
-      if (!introDone) {
-        setSkipped(true)
-        setIntroDone(true)
-      } else if (phase === 'ready') {
-        setClosing(true)
-      }
+      skip()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [introDone, phase])
+  }, [phase, skip])
 
   useEffect(() => {
     if (phase !== 'error') return
@@ -102,7 +144,12 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
       aria-label={isError ? '本机内核没有响应' : '天枢正在启动'}
       aria-busy={phase !== 'ready' && !isError}
     >
-      <div className="launch-stars" aria-hidden />
+      <div className="launch-sky" aria-hidden>
+        <div className="launch-nebula" />
+        <div className="launch-stars far" />
+        <div className="launch-stars near" />
+        <div className="launch-comet" />
+      </div>
       <div className="launch-vignette" aria-hidden />
 
       <header className="launch-chrome" data-tauri-drag-region>
@@ -115,12 +162,27 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
       </header>
 
       <main className="launch-stage">
+        <div className="launch-inflow" aria-hidden>
+          {SPARKS.map((spark, index) => (
+            <i
+              key={index}
+              style={{ '--dx': spark.x, '--dy': spark.y, '--d': `${spark.delay}ms` } as CSSProperties}
+            />
+          ))}
+        </div>
+
         <div className={`launch-orbit ${isError ? 'is-error' : ''}`} aria-hidden>
+          <span className="launch-rays" />
           <i className="launch-ring outer" />
           <i className="launch-ring main" />
           <i className="launch-ring inner" />
+          <span className="launch-flash" />
+          <i className="launch-beacon" />
           <div className="launch-satellite"><i /></div>
-          <div className="launch-mark"><BrandMark size={112} /></div>
+          <div className="launch-mark">
+            <BrandMark size={112} />
+            <i className="launch-mark-shine" />
+          </div>
         </div>
 
         <div className="launch-word" aria-label="天枢">
@@ -151,9 +213,9 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
           </div>
         )}
 
-        {!isError && !introDone && (
-          <button className="launch-skip" onClick={() => { setSkipped(true); setIntroDone(true) }}>
-            跳过动画 <kbd>Esc</kbd>
+        {!isError && !closing && (
+          <button className="launch-skip" onClick={skip}>
+            跳过启动动画 <kbd>Esc</kbd>
           </button>
         )}
       </main>

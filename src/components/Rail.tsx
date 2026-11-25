@@ -1,6 +1,7 @@
 import { Boxes, Compass, DownloadCloud, MessageSquareText, Settings2 } from 'lucide-react'
 import type { PageKey } from '../types'
 import { APP_VERSION } from '../version'
+import { getRuntimeVersion } from '../api'
 
 const items: { key: PageKey; label: string; icon: typeof Boxes }[] = [
   { key: 'library', label: '模型库', icon: Boxes },
@@ -16,6 +17,9 @@ export function Rail({ page, onNavigate, runningDownloads, backend, onTour }: {
   backend: string
   onTour: () => void
 }) {
+  const shownVersion = getRuntimeVersion() || APP_VERSION
+  const versionMismatch = !!getRuntimeVersion() && getRuntimeVersion() !== APP_VERSION
+
   return (
     <aside className="rail">
       <div className="rail-label">工作台</div>
@@ -44,7 +48,9 @@ export function Rail({ page, onNavigate, runningDownloads, backend, onTour }: {
         <div className="rail-card-sub">模型与推理仅在本机运行</div>
       </div>
       <div className="rail-foot">
-        <span>v{APP_VERSION}</span>
+        <span title={versionMismatch ? `界面组件 v${APP_VERSION} 与后台内核 v${getRuntimeVersion()} 不一致` : undefined}>
+          v{shownVersion}{versionMismatch ? ' !' : ''}
+        </span>
         <button type="button" className="rail-tour" onClick={onTour} title="上手指引" aria-label="打开上手指引">
           <Compass />
           <span>指引</span>

@@ -161,6 +161,21 @@ export function App() {
     return () => { alive = false }
   }, [ready])
 
+  // 升上去了也要说一声：同一份结果只在第一次启动时提示，避免每次开窗都弹。
+  useEffect(() => {
+    if (!ready) return
+    let alive = true
+    void api.updateResult().then(result => {
+      if (!alive || !result?.ok) return
+      let seen = ''
+      try { seen = localStorage.getItem('stardock.update.toasted') ?? '' } catch { /* 隐私模式忽略 */ }
+      if (seen === result.at) return
+      try { localStorage.setItem('stardock.update.toasted', result.at) } catch { /* 忽略 */ }
+      toast(`已升级到 v${result.version}`)
+    }).catch(() => { /* 读不到结果就不提示 */ })
+    return () => { alive = false }
+  }, [ready])
+
   // 默认在应用运行时就把安装包下好：发现新版本 → 后台下载 → 校验完成后再提示“重启即可”。
   useEffect(() => {
     if (!ready || !updateCheck?.available) return
@@ -216,6 +231,16 @@ export function App() {
     setPage('settings')
   }, [])
 
+  // 安装器拉不起来时的第三条路：不用现在装，退出应用时自动装（走壳层的退出即安装）。
+  const enableQuitInstall = useCallback(() => {
+    void api.saveSettings({ ...settings, autoInstallOnQuit: true })
+      .then(next => {
+        setSettings(next)
+        toast('已开启：下次退出应用时会自动安装新版本')
+      })
+      .catch(() => toast('开启失败，可以在「设置 → 版本更新」里手动打开'))
+  }, [settings])
+
   const running = useMemo(() => jobs.filter(job => job.state === 0).length, [jobs])
 
   const pageBody = page === 'chat'
@@ -255,6 +280,7 @@ export function App() {
           onOpenSettings={openUpdateSettings}
           onMessage={toast}
           onSnooze={(hours) => snoozeUpdate(updateCheck, hours)}
+          onEnableQuitInstall={enableQuitInstall}
           autoInstallOnQuit={settings.autoInstallOnQuit}
           forced={updateCheck.forced === true}
         />
