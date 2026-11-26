@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Cpu, Loader2, Power, PowerOff, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Cpu, Loader2, Power, PowerOff, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import type { ChatModels, RuntimeState, StoredSession } from '../types'
 
@@ -39,6 +39,7 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
   // 二次确认：只对「已经有别的驻留、还要再启动一份」这一步；启动没在跑的那份不需要确认。
   const [confirmLoad, setConfirmLoad] = useState<string | null>(null)
   const [allowMultiple, setAllowMultiple] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   async function refresh(silent = false) {
     if (!silent) setLoading(true)
@@ -98,6 +99,23 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
     }
   }
 
+  async function remove(name: string) {
+    setBusyName(name)
+    try {
+      const result = await api.deleteModel(name)
+      toast(result.message)
+      if (!result.ok) setError(result.message)
+      else setConfirmDelete(null)
+      await refresh(true)
+    } catch (e) {
+      const text = e instanceof Error ? e.message : '删除失败'
+      setError(text)
+      toast(text)
+    } finally {
+      setBusyName('')
+    }
+  }
+
   const boundSessions = (name: string) => sessions.filter(session => session.model === name).length
 
   return (
@@ -120,7 +138,7 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
         <div className="summary-main">
           <span className="summary-kicker">当前后端</span>
           <div className="summary-count">
-            <strong>{running.length}</strong>
+            <strong>{loading && !runtime ? '—' : running.length}</strong>
             {/* 原先三个三元分支返回同一个字符串（编辑残留）：这里本想做单复数，
                 中文不需要，就一句写清它数的是什么——驻留份数，不是后端个数。 */}
             <small>份模型驻留</small>
@@ -137,8 +155,8 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
         </div>
         <div className="summary-tile">
           <span>可启动</span>
-          <b>{idle.length}</b>
-          <small>{installed.length ? `本机可用 ${installed.length} 份` : '本机没有可用模型'}</small>
+          <b>{loading && !models ? '—' : idle.length}</b>
+          <small>{loading && !models ? '正在读取本机模型…' : installed.length ? `本机可用 ${installed.length} 份` : '本机没有可用模型'}</small>
         </div>
       </section>
 
@@ -182,7 +200,7 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
                   <div className="meta-field"><span className="meta-label">后端</span><b className="meta-value">{runtime?.backend ?? '—'}</b></div>
                 </div>
                 <div className="model-foot">
-                  <span className="source">关掉后，绑着它的旧会话不能继续发消息，需要新建会话。</span>
+                  <span className="source">关掉后，绑着它的旧会话不能继续发消息，需要新建会话；模型文件可在关闭后删除。</span>
                   <span className="grow" />
                   {runtime?.canControl && (
                     <button className="btn ghost sm" disabled={busyName === item.name} onClick={() => void unload(item.name)}>
@@ -203,7 +221,15 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
         <button className="btn ghost sm" onClick={onOpenLibrary}><Cpu />去模型库下载</button>
       </div>
 
-      {installed.length === 0
+      {loading && !models
+        ? (
+          <div className="empty-state">
+            <div className="empty-state-icon"><Loader2 className="spin" /></div>
+            <h3>正在读取本机模型</h3>
+            <p>扫描模型目录、确认哪些文件可以启动；下载刚完成的文件可能需要几秒钟才会出现在这里。</p>
+          </div>
+        )
+        : installed.length === 0
         ? (
           <div className="empty-state">
             <div className="empty-state-icon"><ShieldCheck /></div>
@@ -225,7 +251,20 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
                   <span className="chip">可用</span>
                 </div>
                 <div className="model-foot">
-                  {confirmLoad === name ? (
+                  {confirmDelete === name ? (
+                    <div className="delete-confirm">
+                      <span className="note">
+                        删除会把磁盘上的 GGUF 和下载记录一起移除，不能恢复。
+                        {boundSessions(name) > 0 ? ` 有 ${boundSessions(name)} 个会话绑着这份；删除后这些会话不能继续。` : ''}
+                      </span>
+                      <div className="delete-confirm-actions">
+                        <button className="btn ghost sm" onClick={() => setConfirmDelete(null)}>取消</button>
+                        <button className="btn danger sm" disabled={busyName === name} onClick={() => void remove(name)}>
+                          {busyName === name ? <Loader2 className="spin" /> : <Trash2 />}确认删除
+                        </button>
+                      </div>
+                    </div>
+                  ) : confirmLoad === name ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
                       <span className="note">
                         {running.length
@@ -249,6 +288,9 @@ export function ModelsPage({ toast, onOpenChat, onOpenLibrary }: {
                     <>
                       <span className="source">{running.length ? '会先要你确认是否同时驻留' : '启动后新会话默认绑它'}</span>
                       <span className="grow" />
+                      <button className="btn danger sm" disabled={busyName === name} onClick={() => { setConfirmLoad(null); setConfirmDelete(name) }}>
+                        <Trash2 />删除
+                      </button>
                       <button className="btn primary sm" disabled={busyName === name} onClick={() => setConfirmLoad(name)}>
                         <Power />启动
                       </button>

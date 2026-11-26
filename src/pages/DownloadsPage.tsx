@@ -1,11 +1,26 @@
+import { useEffect, useState } from 'react'
 import { ArrowDownToLine, ArrowRight, CheckCircle2, CircleStop, Clock3, DownloadCloud, FolderOpen, HardDrive } from 'lucide-react'
 import { api } from '../api'
-import type { DownloadJob } from '../types'
+import type { DownloadJob, ModelDirectoryState } from '../types'
 
 function bytes(value: number | null | undefined) {
   if (!value) return '—'
   const gb = value / 1024 / 1024 / 1024
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(value / 1024 / 1024)} MB`
+}
+function rate(bytesPerSecond: number | null | undefined) {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return '测速中…'
+  const mb = bytesPerSecond / 1024 / 1024
+  return mb >= 1 ? `${mb.toFixed(1)} MB/s` : `${Math.max(1, Math.round(bytesPerSecond / 1024))} KB/s`
+}
+function eta(seconds: number | null | undefined) {
+  if (seconds == null || seconds <= 0) return ''
+  if (seconds < 60) return `${Math.ceil(seconds)} 秒`
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest > 0 ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
 }
 function stateLabel(job: DownloadJob) {
   if (job.state === 0) return '下载中'
@@ -21,6 +36,8 @@ function stateChip(job: DownloadJob) {
 }
 
 export function DownloadsPage({ jobs, refresh, toast, onOpenLibrary }: { jobs: DownloadJob[]; refresh: () => void; toast: (message: string) => void; onOpenLibrary?: () => void }) {
+  const [directory, setDirectory] = useState<ModelDirectoryState | null>(null)
+  useEffect(() => { void api.modelDirectory().then(setDirectory).catch(() => {}) }, [])
   const running = jobs.filter(j => j.state === 0)
   const done = jobs.filter(j => j.state === 1)
   const failed = jobs.filter(j => j.state === 2 || j.state === 3)
@@ -63,11 +80,25 @@ export function DownloadsPage({ jobs, refresh, toast, onOpenLibrary }: { jobs: D
               <div className="download-cover">{job.modelName.slice(0, 1).toUpperCase()}</div>
               <div style={{ minWidth: 0 }}>
                 <div className="download-name">{job.modelName}</div>
-                <div className="download-sub">{job.fileName} · {job.message}</div>
+                <div className="download-sub">
+                  {job.fileName}
+                  {job.state !== 0 ? ` · ${job.message}` : ''}
+                </div>
               </div>
               <div className="progress-wrap">
-                <div className="progress-head"><span>{job.state === 0 ? `${Math.round(pct * 100)}%` : stateLabel(job)}</span><span>{bytes(job.totalBytes || job.bytes)}</span></div>
-                <div className={`progress ${job.state === 1 ? 'completed' : job.state === 2 || job.state === 3 ? 'failed' : ''}`}><i style={{ width: `${job.state === 1 ? 100 : pct * 100}%` }} /></div>
+                <div className="progress-head">
+                  <span>{job.state === 0 ? `${Math.round(pct * 100)}%` : stateLabel(job)}</span>
+                  <span>{job.state === 0 ? rate(job.bytesPerSecond) : bytes(job.totalBytes || job.bytes)}</span>
+                </div>
+                <div className={`progress ${job.state === 1 ? 'completed' : job.state === 2 || job.state === 3 ? 'failed' : ''}`}>
+                  <i style={{ width: `${job.state === 1 ? 100 : pct * 100}%` }} />
+                </div>
+                {job.state === 0 && (
+                  <div className="progress-detail">
+                    <span>已接收 {bytes(job.bytes)} / {bytes(job.totalBytes || job.bytes)}</span>
+                    <span>{eta(job.etaSeconds) ? `剩余 ${eta(job.etaSeconds)}` : '剩余时间计算中'}</span>
+                  </div>
+                )}
               </div>
               <div className="download-action">
                 {job.state === 0 ? <button className="btn ghost sm" onClick={() => void cancel(job)}><CircleStop />取消</button> :
@@ -97,6 +128,7 @@ export function DownloadsPage({ jobs, refresh, toast, onOpenLibrary }: { jobs: D
         </div>
         <div className="side-card">
           <div className="side-title">本地模型</div>
+          {directory && <div className="note" title={directory.current}>落盘目录：<code>{directory.custom ? directory.current : "默认目录"}</code></div>}
           {done.length === 0 ? <div className="note">暂无已完成模型。下载完成后将在此处显示。</div> : done.slice(0, 8).map(job => (
             <div className="mini-model" key={job.id}><i className="mini-dot" /><span className="mini-name">{job.modelName}</span><span className="mini-size">{bytes(job.bytes)}</span></div>
           ))}

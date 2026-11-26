@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Com
 import { api, getRuntimeVersion } from '../api'
 import { releaseHistory, releaseHistoryStable, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
-import type { AppSettings, Edge0State, HardwareProfile, ModelSourcesState, UpdateCheck, UpdateOutcome } from '../types'
+import type { AppSettings, Edge0State, HardwareProfile, ModelDirectoryState, ModelSourcesState, UpdateCheck, UpdateOutcome } from '../types'
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 
@@ -36,7 +36,7 @@ const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; des
   storage: {
     eyebrow: 'Storage',
     title: '存储与数据',
-    description: '模型、会话与界面偏好均保存在本机数据目录，不写入系统目录。',
+    description: '模型下载目录可单独换到空间更大的盘；会话与界面偏好仍保存在本机数据目录，不写入系统目录。',
   },
   update: {
     eyebrow: 'Version check',
@@ -454,35 +454,100 @@ function SourcesSettings({ onStateChange }: { onStateChange: (state: ModelSource
   )
 }
 
-function StorageSettings({ hardware }: { hardware: HardwareProfile | null }) {
+function StorageSettings() {
+  const [directory, setDirectory] = useState<ModelDirectoryState | null>(null)
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void api.modelDirectory().then(state => {
+      if (!alive) return
+      setDirectory(state)
+      setPath(state.current)
+    }).catch(() => { if (alive) setNote('读取模型目录失败，稍后重试。') })
+    return () => { alive = false }
+  }, [])
+
+  async function save(reset = false) {
+    setBusy(true)
+    setNote('')
+    try {
+      const result = await api.saveModelDirectory(reset ? '' : path.trim())
+      if (result.directory) setDirectory(result.directory)
+      if (result.ok) setPath(result.directory?.current ?? '')
+      setNote(result.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '保存模型目录失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const free = directory && directory.freeBytes > 0 ? formatBytes(directory.freeBytes) : '—'
+
   return (
     <>
       <section className="settings-card settings-detail-card">
         <div className="setting-row">
           <div className="setting-copy">
             <div className="setting-name">数据目录</div>
-            <div className="setting-desc">GGUF 模型、会话记录与界面偏好均保存在此目录。</div>
+            <div className="setting-desc">会话、界面偏好与默认模型目录都在这里；模型可以单独换到别的盘。</div>
           </div>
           <code className="settings-path">%APPDATA%\ModelDock</code>
         </div>
+
         <div className="setting-row">
           <div className="setting-copy">
-            <div className="setting-name">目录结构</div>
-            <div className="setting-desc">模型文件、sessions.json、日志与界面偏好文件（ui-theme / ui-backdrop / ui-accent）。</div>
+            <div className="setting-name">模型下载目录</div>
+            <div className="setting-desc">新下载的 GGUF 会写到这里，「我的模型」也只扫描这里。切换不会移动已有文件。</div>
           </div>
-          <span className="chip">本地</span>
+          <span className={`chip ${directory?.custom ? 'success' : ''}`}>{directory?.custom ? '自定义' : '默认'}</span>
         </div>
-        {hardware && (
-          <div className="setting-row">
-            <div className="setting-copy">
-              <div className="setting-name">当前可用空间</div>
-              <div className="setting-desc">依据磁盘探测结果展示</div>
-            </div>
-            <span className="chip">{hardware.freeDiskGb.toFixed(1)} GB</span>
+
+        <div className="setting-row">
+          <div className="settings-dir-form">
+            <input
+              className="settings-input"
+              value={path}
+              onChange={e => setPath(e.target.value)}
+              placeholder={directory?.default || '%APPDATA%\\ModelDock\\models'}
+              aria-label="模型下载目录"
+              spellCheck={false}
+            />
+            <button type="button" className="btn primary sm" disabled={busy || !path.trim()} onClick={() => void save()}>
+              <Check />{busy ? '保存中…' : '保存'}
+            </button>
+            <button type="button" className="btn ghost sm" disabled={busy || !directory?.custom} onClick={() => void save(true)}>
+              恢复默认
+            </button>
           </div>
-        )}
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">当前落点</div>
+            <div className="setting-desc">下载、启动与剩余空间都按这个目录计算。</div>
+          </div>
+          <code className="settings-path">{directory?.current || '正在读取…'}</code>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">所在磁盘剩余</div>
+            <div className="setting-desc">按模型目录所在盘计算，不是数据目录所在盘。</div>
+          </div>
+          <span className="chip">{free}</span>
+        </div>
+
+        {directory?.error && <div className="settings-callout">{directory.error}</div>}
+        {note && <div className="settings-note" style={{ paddingLeft: 0 }}>{note}</div>}
       </section>
-      <p className="settings-note">这里只读，不提供移动或清理入口；删除数据目录会同时带走模型、会话与偏好。</p>
+      <p className="settings-note">
+        填绝对路径后保存，例如 <code>D:\Models\ModelDock</code>。已有模型不会自动搬迁；下载进行中不能切换目录。
+        旧目录里的文件仍留在原处，需要时手动移动过来再回到「我的模型」刷新。
+      </p>
     </>
   )
 }
@@ -1260,7 +1325,7 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
     {
       id: 'storage',
       title: '存储与数据',
-      summary: '%APPDATA%\\ModelDock',
+      summary: '模型目录可换盘 · 会话与偏好',
       icon: HardDrive,
     },
     {
@@ -1291,7 +1356,7 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
           {section === 'appearance' && <AppearanceSettings settings={settings} onChange={onChange} />}
           {section === 'inference' && <InferenceSettings hardware={hardware} settings={settings} onChange={onChange} />}
           {section === 'sources' && <SourcesSettings onStateChange={setSourceState} />}
-          {section === 'storage' && <StorageSettings hardware={hardware} />}
+          {section === 'storage' && <StorageSettings />}
           {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} />}
           {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
           {section === 'updates' && <UpdateSettings channel={settings.updateChannel} />}

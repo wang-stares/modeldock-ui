@@ -1,4 +1,4 @@
-import type { AgentMemoryInfo, AppSettings, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
+import type { AgentMemoryInfo, AppSettings, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelDirectorySaveResult, ModelDirectoryState, ModelDeleteResult, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -93,6 +93,11 @@ export const api = {
     request<RuntimeOpResult>('/api/runtime/load', { method: 'POST', body: JSON.stringify({ model, allowMultiple }) }),
   unloadModel: (model: string) =>
     request<RuntimeOpResult>('/api/runtime/unload', { method: 'POST', body: JSON.stringify({ model }) }),
+  modelDirectory: () => request<ModelDirectoryState>('/api/models/directory'),
+  saveModelDirectory: (path: string) =>
+    request<ModelDirectorySaveResult>('/api/models/directory', { method: 'PUT', body: JSON.stringify({ path }) }),
+  deleteModel: (fileName: string) =>
+    request<ModelDeleteResult>(`/api/models/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
   settings: () => request<AppSettings>('/api/settings'),
   saveSettings: (settings: AppSettings) => request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   edge0: () => request<Edge0State>('/api/edge0'),

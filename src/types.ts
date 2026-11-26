@@ -74,6 +74,8 @@ export interface DownloadJob {
   percent: number
   bytes: number
   totalBytes: number | null
+  bytesPerSecond: number
+  etaSeconds: number | null
   message: string
   verification: string
   usedSource: number | null
@@ -101,6 +103,25 @@ export interface RuntimeState {
 export interface RuntimeOpResult { ok: boolean; model: string; message: string; contextLength: number }
 
 export interface ChatModels { backend: string; backendDetail: string; models: string[]; embeddedReady: boolean; loaded: string[]; busy: string }
+
+/** 模型下载目录的状态；freeBytes 是当前目录所在磁盘的剩余空间。 */
+export interface ModelDirectoryState {
+  current: string
+  default: string
+  custom: boolean
+  exists: boolean
+  freeBytes: number
+  error: string
+}
+
+export interface ModelDirectorySaveResult {
+  ok: boolean
+  message: string
+  directory: ModelDirectoryState
+}
+
+export interface ModelDeleteResult { ok: boolean; message: string }
+
 
 export interface StreamChunk { type: 'delta' | 'done' | 'error'; text?: string; result?: ChatResult }
 export interface ChatResult { text: string; completed: boolean; cancelled: boolean; error: string; completionTokens: number; promptTokens?: number; elapsedSeconds: number; thinking: string; tokensPerSecond: number; contextBudget?: number; contextWindow?: number }
