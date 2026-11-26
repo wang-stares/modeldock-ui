@@ -691,6 +691,26 @@ function VersionUpdateSettings({ settings, onChange }: {
 
         <div className="setting-row">
           <div className="setting-copy">
+            <div className="setting-name">允许代理联网读取网页</div>
+            <div className="setting-desc">
+              默认关闭。打开后，代理派出的 searcher 子体可以用 web_fetch 读公开网页的正文与链接（不提交表单、不登录、不下载文件、不带 cookie）；主代理本身仍然没有联网工具，要上网必须派子体，这样范围、次数与超时都落在一个只读、有预算、可随时停止的任务上。
+              关闭时 web_fetch 会被直接拒绝，一个请求都不会发出去。
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.agentNetwork}
+            aria-label="允许代理联网读取网页"
+            className={`source-switch ${settings.agentNetwork ? 'on' : ''}`}
+            onClick={() => onChange({ agentNetwork: !settings.agentNetwork })}
+          >
+            <span className="source-switch-knob" aria-hidden />
+          </button>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
             <div className="setting-name">接收测试版更新</div>
             <div className="setting-desc">
               {settings.updateChannel === 'beta'

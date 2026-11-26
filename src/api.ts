@@ -1,4 +1,4 @@
-import type { AgentMemoryInfo, AppSettings, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
+import type { AgentMemoryInfo, AppSettings, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -76,10 +76,23 @@ export const api = {
   startDownload: (key: string, fileName: string) =>
     request<DownloadJob>('/api/downloads', { method: 'POST', body: JSON.stringify({ key, fileName }) }),
   cancelDownload: (id: string) => request<DownloadJob>(`/api/downloads/${id}/cancel`, { method: 'POST' }),
-  sessions: () => request<{ sessions: StoredSession[]; lastSessionId: string | null }>('/api/chat/sessions'),
-  createSession: (title = '新会话') => request<StoredSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify({ title }) }),
+  // agent 传了就只回那个形态的会话（4.0.0 阶段 0：左上角切形态 = 切 agent，列表跟着换作用域）
+  sessions: (agent?: string) =>
+    request<{ sessions: StoredSession[]; lastSessionId: string | null }>('/api/chat/sessions' + (agent ? `?agent=${encodeURIComponent(agent)}` : '')),
+  createSession: (title = '新会话', agent?: string) =>
+    request<StoredSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify({ title, agent }) }),
   deleteSession: (id: string) => request<{ ok: boolean }>(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
   chatModels: () => request<ChatModels>('/api/chat/models'),
+  /** 模型运行态：后端、是否可达、此刻驻留的清单、正在启动或关闭的那一份。 */
+  runtime: () => request<RuntimeState>('/api/runtime'),
+  /**
+   * 启动一份并常驻。allowMultiple 是「明知会同时驻两份也照做」的显式选项：
+   * 不勾时后端会直接拒，不拿用户的显存去试。
+   */
+  loadModel: (model: string, allowMultiple = false) =>
+    request<RuntimeOpResult>('/api/runtime/load', { method: 'POST', body: JSON.stringify({ model, allowMultiple }) }),
+  unloadModel: (model: string) =>
+    request<RuntimeOpResult>('/api/runtime/unload', { method: 'POST', body: JSON.stringify({ model }) }),
   settings: () => request<AppSettings>('/api/settings'),
   saveSettings: (settings: AppSettings) => request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   edge0: () => request<Edge0State>('/api/edge0'),
@@ -88,6 +101,18 @@ export const api = {
   sources: () => request<ModelSourcesState>('/api/sources'),
   saveSource: (id: string, update: ModelSourceUpdate) =>
     request<ModelSourcesState>(`/api/sources/${id}`, { method: 'PUT', body: JSON.stringify(update) }),
+  // 工作区面板：只读文件面与改动列表，路径边界与 agent 的写工具同一套
+  workspaceInfo: () => request<WorkspaceInfo>('/api/workspace/info'),
+  workspaceTree: (path: string) =>
+    request<{ entries: WorkspaceEntry[]; error?: string }>(`/api/workspace/tree?path=${encodeURIComponent(path)}`),
+  workspaceFile: (path: string) =>
+    request<{ file: WorkspaceFile | null; error?: string }>(`/api/workspace/file?path=${encodeURIComponent(path)}`),
+  /** 某个文件的行级 diff（拿它最近的检查点当改动前）。没备份时 hasBase=false。 */
+  /** 浏览器页签：抓一个公开网页读正文。协议、体积、超时、跳转都在服务端限死 */
+  webFetch: (url: string) => request<WebFetchResult>('/api/web/fetch', { method: 'POST', body: JSON.stringify({ url }) }),
+  workspaceDiff: (path: string) => request<WorkspaceDiff>(`/api/workspace/diff?path=${encodeURIComponent(path)}`),
+  workspaceChanges: () =>
+    request<{ changes: WorkspaceChangeRow[]; reversible: number; irreversible: number; note: string }>('/api/workspace/changes'),
   checkUpdate: (force = false) => request<UpdateCheck>(`/api/update/check${force ? '?force=true' : ''}`),
   allowUpdateStepBack: (version: string) =>
     request<{ ok: boolean }>('/api/update/step-back', { method: 'POST', body: JSON.stringify({ version }) }),
@@ -150,7 +175,7 @@ export async function streamChat(
   }
 }
 
-export interface AgentStreamBody { sessionId: string; model: string; content: string; profile?: string; planOnly?: boolean }
+export interface AgentStreamBody { sessionId: string; model: string; content: string; profile?: string; planOnly?: boolean; followPlan?: boolean }
 
 /** 任务代理的流：事件按顺序到达，界面只按 type 分派，不猜状态。 */
 export async function streamAgent(
@@ -206,6 +231,26 @@ export const agentApi = {
     request<{ ok: boolean }>('/api/agent/decision', { method: 'POST', body: JSON.stringify({ runId, callId, allow, scope }) }),
   cancel: (runId: string) => request<{ ok: boolean }>(`/api/agent/runs/${runId}/cancel`, { method: 'POST' }),
   memory: () => request<AgentMemoryInfo>('/api/agent/memory'),
+  /** 此刻在跑的子任务（换页、刷新后仍能恢复任务卡）。 */
+  subtasks: () => request<SubTasksState>('/api/agent/subtasks'),
+  /** 停掉一个子任务：只停这一个，不动整次执行。 */
+  cancelSubtask: (id: string) =>
+    request<{ ok: boolean; error: string; note: string }>(`/api/agent/subtasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  /** 当前目标（没有就是 null）。 */
+  goal: (sessionId: string) => request<{ goal: GoalSnapshot | null }>(`/api/agent/goal?sessionId=${encodeURIComponent(sessionId)}`),
+  /** 声明 / 暂停 / 继续 / 完成 / 清掉目标。 */
+  setGoal: (body: {
+    sessionId: string
+    action: 'declare' | 'pause' | 'resume' | 'complete' | 'clear'
+    objective?: string
+    acceptance?: string[]
+    turnBudget?: number
+    tokenBudget?: number
+    wallClockMinutes?: number
+    evidence?: string[]
+    relaxBudget?: boolean
+    profile?: string
+  }) => request<GoalResult>('/api/agent/goal', { method: 'POST', body: JSON.stringify(body) }),
   forgetSession: (key: string) => request<{ ok: boolean }>(`/api/agent/memory/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
   forgetNote: (scope: 'workspace' | 'global', text: string) =>
     request<{ ok: boolean }>(`/api/agent/memory/notes?scope=${scope}&text=${encodeURIComponent(text)}`, { method: 'DELETE' }),

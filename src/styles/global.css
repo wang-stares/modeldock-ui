@@ -176,11 +176,21 @@ a { color: inherit; text-decoration: none; }
 .brand-name { font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: .06em; }
 .brand-name span { color: var(--text-3); font-weight: 500; margin-left: 6px; font-size: 13px; letter-spacing: .03em; }
 .titlebar-spacer { flex: 1; }
+.titlebar-agents { margin-left: 10px; flex: none; }
+.titlebar-agents button { font-size: 12.5px; }
 .titlebar-page {
   height: 28px; padding: 0 12px;
   display: inline-flex; align-items: center;
   border-radius: 8px; background: var(--surface-soft);
   color: var(--text-2); font-size: 13px; letter-spacing: .01em;
+  /* 标题变长或窗口挤到最窄时，省略号收尾，不许退成一字一行的竖排。
+     真浏览器里量到过：这一格被挤到 26px 宽，「我的模型」四个字就竖着排进了标题栏。
+     min-width:0 是前提——flex 子项默认 min-width:auto，不给它就只会撑不会缩。*/
+  min-width: 0;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .window-controls { display: flex; height: 100%; margin-left: 4px; gap: 2px; align-items: center; }
 .window-btn {
@@ -206,6 +216,17 @@ a { color: inherit; text-decoration: none; }
 .page-scroll { min-height: 0; overflow: auto; border-radius: var(--radius-lg); }
 
 /* ── floating rail ───────────────────────────────────────────────── */
+/* 工作台折叠成图标条：只有展开/折叠两档，没有拖拽调宽的边框。 */
+.workspace.rail-collapsed { --rail-w: 68px; }
+.rail.collapsed { padding: 18px 8px 12px; align-items: center; }
+.rail-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 4px 12px; }
+.rail.collapsed .rail-head { justify-content: center; padding: 0 0 12px; }
+.rail-toggle { color: var(--text-3); }
+.rail.collapsed .nav-item { justify-content: center; padding: 0; }
+.rail.collapsed .nav-item .nav-icon { margin: 0; }
+.rail.collapsed .nav-badge { position: absolute; top: 6px; right: 6px; }
+.rail.collapsed .rail-foot { flex-direction: column; gap: 8px; }
+
 .rail {
   min-height: 0;
   padding: 18px 12px 12px;
@@ -433,14 +454,62 @@ a { color: inherit; text-decoration: none; }
 /* ── chat ─────────────────────────────────────────────────────────── */
 .chat-layout {
   display: grid; grid-template-columns: 220px minmax(0, 1fr) 272px;
+  /* 命名区：任何一栏被隐藏（窄屏收起会话列表、或右栏换成折叠图标条）都不会让后面的列整体错位。
+     原先只靠 grid-template-columns 按位置排：会话列 display:none 之后，对话列拿到 220px 轨道、
+     右栏拿到分隔条的 10px，整页看起来像坏了。第 16 轮量到过。 */
+  grid-template-areas: "sessions chat splitter right";
   gap: 14px; height: 100%; padding: 4px 0 14px; min-height: 0;
+  /* 窄窗右栏改成抽屉后要相对这块区域定位，不再挤栅格。 */
+  position: relative;
 }
+.chat-layout > .sessions-panel { grid-area: sessions; }
+.chat-layout > .chat-center { grid-area: chat; }
+.chat-layout > .chat-splitter { grid-area: splitter; }
+.chat-layout > .inspector, .chat-layout > .inspector-rail { grid-area: right; }
 .chat-col { min-height: 0; display: flex; flex-direction: column; }
+/* 右栏分隔条与折叠后的图标条：面板不该挤掉对话区，也不该在窄窗直接消失 */
+.chat-splitter { width: 10px; align-self: stretch; cursor: col-resize; border-radius: 6px; background: transparent; position: relative; }
+.chat-splitter::after { content: ''; position: absolute; inset: 26% 4px; border-radius: 3px; background: var(--line); transition: background 0.16s ease; }
+.chat-splitter:hover::after, .chat-splitter:active::after { background: var(--accent); }
+.inspector-rail { align-items: center; gap: 8px; padding: 12px 0; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line); }
+.inspector-rail .grow { display: none; }
+/* 窄窗（980 最小宽度）放不下第 4 列时：右栏改为覆盖在对话区上方的抽屉。
+   点遮罩、点关闭按钮或 Esc 都能收起；窗口变宽后自动并回固定右栏。 */
+.inspector-scrim {
+  position: absolute; inset: 0; z-index: 21; border: 0; padding: 0; cursor: default;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  backdrop-filter: blur(2px);
+}
+.inspector-drawer {
+  position: absolute; top: 4px; right: 0; bottom: 14px; z-index: 22;
+  width: min(380px, calc(100% - 64px));
+  padding: 14px;
+  /* 浮层下面盖着对话正文，不能用半透明的 --surface，否则字会透上来。 */
+  background: var(--surface-solid);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md), inset 0 0 0 1px var(--line);
+  animation: inspector-drawer-in 0.16s ease-out;
+}
+/* 抽屉是绝对定位浮层，不占命名区；否则绝对定位的网格子项会拿 right 区当包含块。 */
+.chat-layout > .inspector-drawer { grid-area: auto; }
+@keyframes inspector-drawer-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inspector-drawer { animation: none; }
+}
 .chat-panel {
   background: var(--surface); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line);
   min-height: 0; backdrop-filter: blur(24px);
 }
+/* 会话列折叠成窄条：同左栏，只有两档，没有拖拽调宽的边框。 */
+.sessions-panel.collapsed { padding: 10px 0; align-items: center; }
+.sessions-collapsed { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.sessions-head-actions { display: flex; align-items: center; gap: 2px; }
+
 .sessions-panel { padding: 14px 11px 10px; }
 .sessions-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 7px 12px; }
 .sessions-title { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
@@ -500,23 +569,29 @@ a { color: inherit; text-decoration: none; }
 }
 .composer textarea { width: 100%; min-height: 46px; max-height: 160px; resize: none; border: 0; outline: 0; background: transparent; font-size: 14px; line-height: 1.65; padding: 2px 4px 9px; }
 .composer textarea::placeholder { color: var(--text-3); }
+/* 状态条：输入框上方常驻一行。回答的是「这一句会改我的文件吗、用的是哪个模型、还剩多少」 */
+.status-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 0 2px 8px; }
+.status-strip .grow { flex: 1; }
+.strip-chip { display: inline-flex; align-items: center; gap: 5px; height: 25px; padding: 0 9px; border: 0; border-radius: 8px; background: var(--surface-soft); color: var(--text-2); font-size: 12px; font-weight: 600; cursor: pointer; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.strip-chip:hover { background: var(--surface-hover); }
+.strip-chip svg { width: 11px; height: 11px; flex: none; }
+.strip-chip.accent { background: var(--accent-soft); color: var(--accent); }
+.strip-chip.warn { background: var(--warn-soft); color: var(--warn); }
+.strip-chip.plan { background: var(--accent-softer); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-soft); }
+.strip-chip.locked { gap: 4px; }
+.strip-num { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.ws-switch .grow { flex: 1; }
 .composer-foot { display: flex; align-items: center; gap: 7px; }
 .composer-chip { height: 27px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border-radius: 8px; background: var(--surface-soft); color: var(--text-2); font-size: 13px; font-weight: 600; }
+/* 模型未启动时的那一颗：用 warn 令牌，不另开一套颜色；它是可点的（跳到「我的模型」）。 */
+.composer-chip.warn { background: var(--warn-soft); color: var(--warn); }
+.composer-chip.warn:hover { filter: brightness(.96); }
 .composer-chip svg { width: 12px; height: 12px; }
 .seg { height: 27px; display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; background: var(--surface-soft); }
 .seg button { height: 23px; padding: 0 11px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: background 0.16s ease, color 0.16s ease; }
 .seg button:hover:not(.on):not(:disabled) { background: var(--surface-hover); color: var(--text-2); }
 .seg button.on { background: var(--accent); color: var(--on-accent); }
 .seg button:disabled { opacity: 0.55; cursor: default; }
-.plan-chip {
-  height: 27px; padding: 0 11px; border: 0; border-radius: 9px;
-  background: var(--surface-soft); color: var(--text-3);
-  font-size: 12.5px; font-weight: 600; cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease;
-}
-.plan-chip:hover:not(.on):not(:disabled) { background: var(--surface-hover); color: var(--text-2); }
-.plan-chip.on { background: var(--surface-raised); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.plan-chip:disabled { opacity: 0.55; cursor: default; }
 .composer-foot .grow { flex: 1; }
 .send-btn {
   width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center;
@@ -527,6 +602,60 @@ a { color: inherit; text-decoration: none; }
 .send-btn:disabled { background: var(--surface-soft); color: var(--text-3); box-shadow: none; }
 .send-btn svg { width: 16px; height: 16px; }
 .inspector { overflow: auto; display: flex; flex-direction: column; gap: 11px; }
+/* ── 工作区面板（4.0.0 阶段 5）：只用现有令牌，不新开一套颜色 ───────── */
+.ws-switch { display: flex; gap: 4px; margin-bottom: 10px; }
+.ws-switch button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ws-switch button.on { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-sm); }
+.ws-switch button svg { width: 13px; height: 13px; }
+.workspace-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; margin-bottom: 12px; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line); }
+.ws-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-soft);
+  /* 窄面板里五个等分 flex 项各只有 ~56px：图标+三字标签放不下就折进 26px 定高，
+     界面上就成了「文/件」「预/览」竖排（第 18 轮量到 52×26，对比概览那组 63×28）。
+     改成不换行 + 横向可滚：宁可滑一下，也不把标签拆成两行。 */
+  overflow-x: auto; scrollbar-width: thin; }
+.ws-tabs button { flex: 1 0 auto; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ws-tabs button.on { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-sm); }
+.ws-tabs button svg { width: 13px; height: 13px; }
+.ws-bar { display: flex; align-items: center; gap: 6px; min-height: 26px; }
+.ws-bar .grow { flex: 1; }
+.ws-path { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-meta { font-size: 12px; color: var(--text-3); line-height: 1.6; }
+.ws-filter { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 28px; border-radius: 9px; background: var(--surface-soft); color: var(--text-3); }
+.ws-filter input { flex: 1; border: 0; background: transparent; font-size: 12.5px; outline: none; }
+.ws-filter svg { width: 13px; height: 13px; }
+.ws-list { display: flex; flex-direction: column; gap: 1px; max-height: 320px; overflow: auto; }
+.ws-row { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer; }
+.ws-row:hover { background: var(--surface-hover); }
+.ws-row.static { cursor: default; }
+.ws-row.static:hover { background: transparent; }
+.ws-row svg { width: 13px; height: 13px; color: var(--text-3); flex: none; }
+.ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-size { flex: none; font-size: 11.5px; color: var(--text-3); }
+.ws-empty { padding: 10px 8px; font-size: 12.5px; color: var(--text-3); line-height: 1.6; }
+.ws-error { padding: 8px 10px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 12.5px; line-height: 1.6; }
+.ws-changes { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow: auto; }
+.ws-tasks { display: flex; flex-direction: column; gap: 3px; max-height: 360px; overflow: auto; }
+.ws-web { display: flex; flex-direction: column; gap: 6px; }
+.ws-address { flex: 1; height: 28px; padding: 0 9px; border: 0; border-radius: 9px; background: var(--surface-soft); color: var(--text); font-size: 12.5px; outline: none; }
+.ws-links { display: flex; flex-direction: column; gap: 1px; max-height: 220px; overflow: auto; }
+.ws-goal { padding: 8px 10px; border-radius: 10px; background: var(--surface-soft); display: flex; flex-direction: column; gap: 3px; }
+.ws-diff { margin: 2px 0 6px; border-radius: 10px; background: var(--surface-soft); padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+.ws-hunk { border-radius: 8px; overflow: hidden; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.ws-hunk-head { padding: 3px 8px; font-size: 11.5px; color: var(--text-3); background: var(--surface-soft); font-family: var(--mono, ui-monospace, monospace); }
+.ws-dl { display: flex; gap: 6px; padding: 1px 8px; font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; line-height: 1.55; }
+.ws-dl.add { background: var(--success-soft); }
+.ws-dl.del { background: var(--danger-soft); }
+.ws-dl-no { flex: none; width: 26px; text-align: right; color: var(--text-3); user-select: none; }
+.ws-dl-mark { flex: none; width: 10px; color: var(--text-3); }
+.ws-dl-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-row .chip { flex: none; }
+.ws-row button svg { width: 13px; height: 13px; }
+.ws-preview { display: flex; flex-direction: column; gap: 6px; }
+.ws-preview-head { display: flex; align-items: center; gap: 6px; }
+.ws-preview-head .grow { flex: 1; }
+.ws-text { margin: 0; padding: 10px; border-radius: 10px; background: var(--surface-soft); font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
+.ws-image { max-width: 100%; border-radius: 10px; }
+
 .inspector-card { padding: 16px; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line); }
 .inspector-title { font-size: 14px; font-weight: 600; margin-bottom: 11px; display: flex; align-items: center; justify-content: space-between; }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -759,9 +888,12 @@ a { color: inherit; text-decoration: none; }
 .caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -0.12em; background: var(--accent); animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
-@media (max-width: 1380px) {
-  .chat-layout { grid-template-columns: 210px minmax(0, 1fr); }
-  .chat-layout .inspector { display: none; }
+/* 右栏的收放一律由 ChatPage 按窗口宽度决定（见 inspectorFits），CSS 不再插手。
+   原先这里有一条 @media (max-width: 1380px) 用 !important 覆盖内联栅格、把 .inspector 直接
+   display:none——而折叠态的 .inspector-rail 是 React 条件渲染的，窄窗下它根本不在 DOM 里，
+   于是右栏既看不见也没有入口。默认窗口只有 1280 宽，等于开箱砍掉了 4.0 的右栏功能（第 16 轮真浏览器发现）。 */
+@media (max-width: 1120px) {
+  .rail { padding: 14px 8px; }
 }
 @media (max-width: 1240px) {
   .model-grid { grid-template-columns: 1fr; }
@@ -773,6 +905,7 @@ a { color: inherit; text-decoration: none; }
 }
 @media (max-width: 900px) {
   :root { --rail-w: 72px; }
+  .workspace.rail-collapsed { --rail-w: 60px; }
   .workspace { padding: 0 10px 10px; gap: 10px; }
   .rail { padding: 14px 8px; align-items: center; border-radius: 16px; }
   .rail-label, .nav-item span, .nav-badge, .rail-card, .rail-foot span { display: none; }
@@ -833,7 +966,7 @@ a { color: inherit; text-decoration: none; }
   .source-row { gap: 14px; }
   .source-switch { margin-top: 1px; }
 }
-.settings-input { width: min(300px, 46vw); padding: 8px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); font-family: var(--mono); font-size: 12.5px; color: var(--text-1); outline: none; }
+.settings-input { width: min(300px, 46vw); padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); font-family: var(--mono); font-size: 12.5px; color: var(--text); outline: none; }
 .settings-input:focus { border-color: var(--accent); }
 .edge0-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 4px 0 12px; }
 .edge0-field .settings-input { flex: 0 1 320px; }
@@ -868,7 +1001,7 @@ a { color: inherit; text-decoration: none; }
 .update-notes { margin-top: 12px; max-height: 220px; overflow: auto; padding: 12px 14px; border-radius: 12px; background: var(--surface-soft); font-size: 12.5px; line-height: 1.75; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
 .update-asset { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .update-asset-copy { min-width: 0; }
-.update-asset-name { font-family: var(--mono); font-size: 12.5px; color: var(--text-1, var(--text)); }
+.update-asset-name { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
 .update-asset-meta { margin-top: 3px; font-size: 12px; color: var(--text-3); }
 .update-asset-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .update-inline-error { margin-top: 10px; font-size: 12.5px; line-height: 1.6; color: var(--danger); }

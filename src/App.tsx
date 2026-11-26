@@ -8,12 +8,13 @@ import { Onboarding } from './components/Onboarding'
 import { UpdateBanner } from './components/UpdatePanel'
 import { hasSeenOnboarding, markOnboardingSeen } from './onboarding'
 import { LibraryPage } from './pages/LibraryPage'
+import { ModelsPage } from './pages/ModelsPage'
 import { ChatPage } from './pages/ChatPage'
 import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import type { AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
+import type { AgentProfileId, AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true, agentNetwork: false }
 
 function loadSettings(): AppSettings {
   try {
@@ -28,11 +29,23 @@ function effectiveTheme(theme: AppSettings['theme']): 'light' | 'dark' {
 }
 
 export function App() {
+  // 左侧工作台折叠：只有展开/折叠两档，**不做拖拽调宽**（用户明确要求）。
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('stardock.railCollapsed') === '1' } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('stardock.railCollapsed', railCollapsed ? '1' : '0') } catch { /* 存不进去就算了 */ }
+  }, [railCollapsed])
+
   const [page, setPage] = useState<PageKey>(() => {
     const value = new URLSearchParams(window.location.search).get('page')
-    return value === 'chat' || value === 'downloads' || value === 'settings' ? value : 'library'
+    return value === 'chat' || value === 'models' || value === 'downloads' || value === 'settings' ? value : 'library'
   })
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  // 当前 agent 形态放在 App：左上角切它，会话页与对话都跟着换（3.x 把它藏在会话页的输入框旁）。
+  const [agent, setAgentState] = useState<AgentProfileId>(() => {
+    try { return localStorage.getItem('stardock.agent') === 'office' ? 'office' : 'code' } catch { return 'code' }
+  })
   const [hardware, setHardware] = useState<HardwareProfile | null>(null)
   const [jobs, setJobs] = useState<DownloadJob[]>([])
   const [backend, setBackend] = useState('本地推理')
@@ -45,6 +58,13 @@ export function App() {
   const [tourOpen, setTourOpen] = useState(false)
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null)
   const toastTimer = useRef<number | null>(null)
+
+  function setAgent(next: AgentProfileId) {
+    if (next === agent) return
+    setAgentState(next)
+    try { localStorage.setItem('stardock.agent', next) } catch { /* 隐私模式忽略 */ }
+    toast(next === 'office' ? '已切到办公 agent：只读写工作区，不执行命令' : '已切到编程 agent：可按白名单执行命令，每次都要你点头')
+  }
 
   function toast(message: string) {
     setToastText(message)
@@ -244,10 +264,11 @@ export function App() {
   const running = useMemo(() => jobs.filter(job => job.state === 0).length, [jobs])
 
   const pageBody = page === 'chat'
-    ? <ChatPage toast={toast} onOpenLibrary={() => setPage('library')} />
+    ? <ChatPage toast={toast} agent={agent} onOpenLibrary={() => setPage('library')} onOpenModels={() => setPage('models')} />
     : (
       <div className="page-scroll">
         {page === 'library' && <LibraryPage hardware={hardware} onHardware={() => { /* popover handled inside page */ }} jobs={jobs} toast={toast} />}
+        {page === 'models' && <ModelsPage toast={toast} onOpenChat={() => setPage('chat')} onOpenLibrary={() => setPage('library')} />}
         {page === 'downloads' && <DownloadsPage jobs={jobs} refresh={() => void refreshDownloads()} toast={toast} onOpenLibrary={() => setPage('library')} />}
         {page === 'settings' && <SettingsPage settings={settings} onChange={patch => setSettings(prev => ({ ...prev, ...patch }))} hardware={hardware} onReplayTour={replayTour} />}
       </div>
@@ -256,10 +277,11 @@ export function App() {
   return (
     <div className="app">
       <div className="ambient" aria-hidden><i /><i /><i /></div>
-      <TitleBar page={page} />
+      <TitleBar page={page} agent={agent} onAgent={setAgent} />
       {ready && (
-        <div className="workspace">
-          <Rail page={page} onNavigate={setPage} runningDownloads={running} backend={backend} onTour={replayTour} />
+        <div className={`workspace ${railCollapsed ? 'rail-collapsed' : ''}`}>
+          <Rail page={page} onNavigate={setPage} runningDownloads={running} backend={backend} onTour={replayTour}
+            collapsed={railCollapsed} onToggle={() => setRailCollapsed(v => !v)} />
           <main className="main">
             <div className="page-stage" key={page}>{pageBody}</div>
           </main>
