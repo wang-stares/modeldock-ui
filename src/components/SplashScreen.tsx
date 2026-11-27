@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { BrandMark } from './BrandMark'
@@ -15,16 +15,15 @@ export type LaunchPhase = 'connect' | 'probe' | 'ready' | 'error'
  *
  * 入场走完（2.1s）之前不允许收场，满 3.0s 且内核就绪后再停 0.6s 展示「准备完成」，
  * 最后 0.64s 收场。冷启动 sidecar 慢时继续按真实进度等待，不提前收场。
+ *
+ * 启动页不跟随系统的「减少动态效果」压成 0.6 秒：很多 Windows（尤其云桌面）
+ * 为了性能关掉了客户端动画，WebView 会报 prefers-reduced-motion，启动页就会
+ * 一闪而过。这里固定播完整入场，同时保留「跳过启动动画」和 Esc 给不想看的人。
  */
 const INTRO_MS = 2100
 const MIN_VISIBLE_MS = 3000
 const READY_HOLD_MS = 600
 const EXIT_MS = 640
-
-const REDUCED_INTRO_MS = 240
-const REDUCED_MIN_VISIBLE_MS = 420
-const REDUCED_HOLD_MS = 60
-const REDUCED_EXIT_MS = 120
 
 const STAGES: Record<LaunchPhase, { percent: number; label: string; note: string }> = {
   connect: {
@@ -66,10 +65,6 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
   onRetry: () => void
   onDone: () => void
 }) {
-  const reduced = useMemo(
-    () => (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
-    [],
-  )
   const [introDone, setIntroDone] = useState(false)
   const [minElapsed, setMinElapsed] = useState(false)
   const [skipped, setSkipped] = useState(false)
@@ -78,23 +73,21 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
   const retryRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    const intro = window.setTimeout(() => setIntroDone(true), reduced ? REDUCED_INTRO_MS : INTRO_MS)
-    const gate = window.setTimeout(() => setMinElapsed(true), reduced ? REDUCED_MIN_VISIBLE_MS : MIN_VISIBLE_MS)
+    const intro = window.setTimeout(() => setIntroDone(true), INTRO_MS)
+    const gate = window.setTimeout(() => setMinElapsed(true), MIN_VISIBLE_MS)
     return () => {
       window.clearTimeout(intro)
       window.clearTimeout(gate)
     }
-  }, [reduced])
+  }, [])
 
   useEffect(() => {
     if (phase !== 'ready') return
     if (!skipped && (!introDone || !minElapsed)) return
-    const delay = skipped
-      ? (reduced ? 40 : 120)
-      : (reduced ? REDUCED_HOLD_MS : READY_HOLD_MS)
+    const delay = skipped ? 120 : READY_HOLD_MS
     const timer = window.setTimeout(() => setClosing(true), delay)
     return () => window.clearTimeout(timer)
-  }, [phase, introDone, minElapsed, skipped, reduced])
+  }, [phase, introDone, minElapsed, skipped])
 
   useEffect(() => {
     if (!closing) return
@@ -102,9 +95,9 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
       if (finished.current) return
       finished.current = true
       onDone()
-    }, reduced ? REDUCED_EXIT_MS : EXIT_MS)
+    }, EXIT_MS)
     return () => window.clearTimeout(timer)
-  }, [closing, onDone, reduced])
+  }, [closing, onDone])
 
   const skip = useCallback(() => {
     setSkipped(true)

@@ -877,10 +877,10 @@
   .tour-keys { display: none; }
 }
 
+/* 启动页是一次性品牌动画，且始终提供「跳过启动动画」与 Esc；不跟随系统
+   「减少动态效果」压成 0.6 秒，否则 Windows 云桌面会把启动页压成一闪而过。
+   上手指引等其他界面仍按系统偏好降动效。 */
 @media (prefers-reduced-motion: reduce) {
-  .launch *,
-  .launch *::before,
-  .launch *::after,
   .tour *,
   .tour *::before,
   .tour *::after {
