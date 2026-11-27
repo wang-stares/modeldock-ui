@@ -1021,6 +1021,8 @@ button.strip-chip:hover { background: var(--surface-hover); }
 .update-confirm-text { font-size: 12.5px; line-height: 1.65; color: var(--text-2); }
 .update-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .update-error-line { display: flex; align-items: flex-start; gap: 8px; color: var(--danger); }
+.update-notice-line { display: flex; align-items: flex-start; gap: 8px; color: var(--success); background: var(--success-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 24%, transparent); }
+.update-notice-line svg { flex: 0 0 auto; margin-top: 2px; }
 .update-latest { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
 .update-latest svg { color: var(--success); }
 .update-latest-note { margin-left: auto; font-size: 12px; color: var(--text-3); }

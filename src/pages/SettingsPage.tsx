@@ -568,12 +568,13 @@ function VersionUpdateSettings({ settings, onChange }: {
   const [cleaning, setCleaning] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [noticeTone, setNoticeTone] = useState<'info' | 'error'>('info')
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null)
   // 被「忽略此版本」跳过的版本号：存本地，这里给它一个看得见、能撤销的入口。
   const [skippedVersion, setSkippedVersion] = useState(() => {
     try { return localStorage.getItem('stardock.update.skipped') ?? '' } catch { return '' }
   })
-  const { download, busy, installing, blocked, portableBlocked, start, pause, install, reveal, percent } = useUpdateDownload(setNotice)
+  const { download, busy, installing, blocked, portableBlocked, start, pause, install, reveal, percent } = useUpdateDownload((text) => showNotice(text, 'error'))
   const [confirming, setConfirming] = useState(false)
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const paused = download?.state === 'paused'
@@ -635,6 +636,11 @@ function VersionUpdateSettings({ settings, onChange }: {
     } finally { setChecking(false) }
   }
 
+  function showNotice(text: string, tone: 'info' | 'error' = 'info') {
+    setNoticeTone(tone)
+    setNotice(text)
+  }
+
   async function runCheck(): Promise<UpdateCheck | null> {
     setChecking(true)
     setError('')
@@ -645,13 +651,13 @@ function VersionUpdateSettings({ settings, onChange }: {
       if (next.error) {
         setError(next.error)
       } else if (next.downgrade) {
-        setNotice(`可以换回正式版 v${next.latestVersion}（比当前的测试版低），可以开始下载。`)
+        showNotice(`可以换回正式版 v${next.latestVersion}（比当前的测试版低），可以开始下载。`)
       } else if (next.available) {
-        setNotice(`发现新版本 v${next.latestVersion}${next.forced ? '（必须升级）' : ''}，可以开始下载。`)
+        showNotice(`发现新版本 v${next.latestVersion}${next.forced ? '（必须升级）' : ''}，可以开始下载。`)
       } else if (next.rolloutPending) {
-        setNotice(`v${next.latestVersion} 正在灰度发布（当前覆盖 ${next.rolloutPercent}%），还没轮到这台，放量后会自动提示。`)
+        showNotice(`v${next.latestVersion} 正在灰度发布（当前覆盖 ${next.rolloutPercent}%），还没轮到这台，放量后会自动提示。`)
       } else {
-        setNotice(`已是最新版本 v${next.currentVersion}（${formatClock(next.checkedAt)} 完成检查）`)
+        showNotice(`已是最新版本 v${next.currentVersion}（${formatClock(next.checkedAt)} 完成检查）`)
       }
       return next
     } catch (e) {
@@ -677,7 +683,7 @@ function VersionUpdateSettings({ settings, onChange }: {
       setCheck(null)
       await runCheck()
       if (result.failed.length > 0) {
-        setNotice(`已清理 ${result.removed} 个文件、释放 ${formatBytes(result.freedBytes)}；有 ${result.failed.length} 个文件被占用，关闭应用后再清理一次。`)
+        showNotice(`已清理 ${result.removed} 个文件、释放 ${formatBytes(result.freedBytes)}；有 ${result.failed.length} 个文件被占用，关闭应用后再清理一次。`)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '清理更新缓存失败')
@@ -692,9 +698,9 @@ function VersionUpdateSettings({ settings, onChange }: {
     try {
       const payload = await api.updateDiagnostics()
       const text = payload.text?.trim()
-      if (!text) { setNotice('还没有更新记录：触发一次检查后再来复制。'); return }
+      if (!text) { showNotice('还没有更新记录：触发一次检查后再来复制。'); return }
       await navigator.clipboard.writeText(`${payload.channel}\n${payload.logPath}\n\n${text}`)
-      setNotice('更新日志已复制到剪贴板。')
+      showNotice('更新日志已复制到剪贴板。')
     } catch (e) {
       setError(e instanceof Error ? e.message : '读取更新日志失败')
     }
@@ -876,7 +882,7 @@ function VersionUpdateSettings({ settings, onChange }: {
                   localStorage.removeItem('stardock.update.snooze')
                 } catch { /* 隐私模式忽略 */ }
                 setSkippedVersion('')
-                setNotice('已清除忽略记录，下次检查会重新提示这一版')
+                showNotice('已清除忽略记录，下次检查会重新提示这一版')
               }}
             >
               <Trash2 aria-hidden />清除
@@ -899,8 +905,11 @@ function VersionUpdateSettings({ settings, onChange }: {
       )}
 
       {notice && (
-        <div className="settings-callout update-error-line">
-          <AlertCircle size={14} aria-hidden />{notice}
+        <div className={`settings-callout ${noticeTone === 'error' ? 'update-error-line' : 'update-notice-line'}`}>
+          {noticeTone === 'error'
+            ? <AlertCircle size={14} aria-hidden />
+            : <Check size={14} aria-hidden />}
+          {notice}
         </div>
       )}
 
