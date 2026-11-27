@@ -14,7 +14,7 @@ import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type { AgentProfileId, AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true, agentNetwork: false }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true, agentNetwork: false, closeToTray: true, downloadConcurrency: 1, downloadLimitKbps: 0, notifyDownloadComplete: true, inferenceContext: 0, inferenceGpuLayers: -1, inferenceThreads: 0 }
 
 function loadSettings(): AppSettings {
   try {
@@ -58,6 +58,7 @@ export function App() {
   const [tourOpen, setTourOpen] = useState(false)
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null)
   const toastTimer = useRef<number | null>(null)
+  const previousJobs = useRef<DownloadJob[]>([])
 
   function setAgent(next: AgentProfileId) {
     if (next === agent) return
@@ -116,6 +117,34 @@ export function App() {
     const interval = window.setInterval(() => { void refreshDownloads() }, 2200)
     return () => window.clearInterval(interval)
   }, [])
+
+  // Ctrl+, 打开设置（Esc 返回由设置页自己处理）；不拦截输入框里的普通按键。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault()
+        setPage('settings')
+        // 页面刚挂载时搜索框还不存在，等一拍再聚焦；已经在设置页时由设置页自己处理。
+        window.setTimeout(() => document.querySelector<HTMLInputElement>('.settings-search')?.focus(), 80)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // 下载从「进行中」变成「已完成」时提示一次；初始化时已有的历史不算新完成。
+  useEffect(() => {
+    const finished = jobs.filter(job =>
+      job.state === 1 && previousJobs.current.some(previous => previous.id === job.id && previous.state === 0))
+    previousJobs.current = jobs
+    if (finished.length === 0 || !settings.notifyDownloadComplete) return
+    const name = finished[0].modelName || finished[0].fileName
+    toast(finished.length === 1 ? `${name} 下载完成` : `${finished.length} 个模型下载完成`)
+    void import('@tauri-apps/api/window')
+      .then(({ getCurrentWindow, UserAttentionType }) =>
+        getCurrentWindow().requestUserAttention(UserAttentionType.Informational))
+      .catch(() => { /* 浏览器预览或窗口不在前台时忽略 */ })
+  }, [jobs, settings.notifyDownloadComplete])
 
   useEffect(() => {
     const root = document.documentElement
@@ -176,7 +205,7 @@ export function App() {
     let alive = true
     void takeInstallResult().then(result => {
       if (!alive || !result) return
-      toast(`上次升级到 v${result.version} 没有完成，可在「设置 → 版本更新」重试`)
+      toast(`上次升级到 v${result.version} 没有完成，可在「设置 → 更新与公告」重试`)
     }).catch(() => { /* 浏览器预览或读锁失败时静默 */ })
     return () => { alive = false }
   }, [ready])
@@ -258,7 +287,7 @@ export function App() {
         setSettings(next)
         toast('已开启：下次退出应用时会自动安装新版本')
       })
-      .catch(() => toast('开启失败，可以在「设置 → 版本更新」里手动打开'))
+      .catch(() => toast('开启失败，可以在「设置 → 更新与公告」里手动打开'))
   }, [settings])
 
   const running = useMemo(() => jobs.filter(job => job.state === 0).length, [jobs])
@@ -270,7 +299,7 @@ export function App() {
         {page === 'library' && <LibraryPage hardware={hardware} onHardware={() => { /* popover handled inside page */ }} jobs={jobs} toast={toast} />}
         {page === 'models' && <ModelsPage toast={toast} onOpenChat={() => setPage('chat')} onOpenLibrary={() => setPage('library')} />}
         {page === 'downloads' && <DownloadsPage jobs={jobs} refresh={() => void refreshDownloads()} toast={toast} onOpenLibrary={() => setPage('library')} />}
-        {page === 'settings' && <SettingsPage settings={settings} onChange={patch => setSettings(prev => ({ ...prev, ...patch }))} hardware={hardware} onReplayTour={replayTour} />}
+        {page === 'settings' && <SettingsPage settings={settings} onChange={patch => setSettings(prev => ({ ...prev, ...patch }))} onReset={next => setSettings(next)} hardware={hardware} onReplayTour={replayTour} />}
       </div>
     )
 

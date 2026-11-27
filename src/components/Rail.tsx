@@ -8,8 +8,9 @@ const items: { key: PageKey; label: string; icon: typeof Boxes }[] = [
   { key: 'models', label: '我的模型', icon: Cpu },
   { key: 'chat', label: '对话', icon: MessageSquareText },
   { key: 'downloads', label: '下载中心', icon: DownloadCloud },
-  { key: 'settings', label: '设置', icon: Settings2 },
 ]
+
+const settingsItem = { key: 'settings' as const, label: '设置', icon: Settings2 }
 
 export function Rail({ page, onNavigate, runningDownloads, backend, onTour, collapsed, onToggle }: {
   page: PageKey
@@ -23,6 +24,7 @@ export function Rail({ page, onNavigate, runningDownloads, backend, onTour, coll
 }) {
   const shownVersion = getRuntimeVersion() || APP_VERSION
   const versionMismatch = !!getRuntimeVersion() && getRuntimeVersion() !== APP_VERSION
+  const SettingsIcon = settingsItem.icon
 
   return (
     <aside className={`rail ${collapsed ? 'collapsed' : ''}`}>
@@ -60,6 +62,19 @@ export function Rail({ page, onNavigate, runningDownloads, backend, onTour, coll
         })}
       </nav>
       <div className="rail-spacer" />
+      <nav className="nav nav-settings" aria-label="固定入口">
+        <button
+          className={`nav-item ${page === settingsItem.key ? 'active' : ''}`}
+          onClick={() => onNavigate(settingsItem.key)}
+          aria-current={page === settingsItem.key ? 'page' : undefined}
+          title={collapsed ? settingsItem.label : undefined}
+          aria-label={collapsed ? settingsItem.label : undefined}
+          data-tour="nav-settings"
+        >
+          <SettingsIcon className="nav-icon" />
+          {!collapsed && <span>{settingsItem.label}</span>}
+        </button>
+      </nav>
       {!collapsed && (
         <div className="rail-card">
           <div className="rail-card-head"><i className="status-dot" />{backend === 'ollama' ? 'Ollama 在线' : '本地推理'}</div>

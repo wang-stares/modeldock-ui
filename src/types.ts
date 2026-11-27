@@ -85,6 +85,9 @@ export interface DownloadJob {
 export interface StoredTurn { role: number; content: string; thinking: string }
 export interface StoredSession { id: string; title: string; createdAt: string; updatedAt: string; turns: StoredTurn[]; model: string }
 
+/** 「我的模型」页只需要的绑定摘要：不带 turns 正文。 */
+export interface SessionBinding { id: string; title: string; model: string; updatedAt: string }
+
 /** 此刻真的占着内存的一份模型；不是「装了哪些」。 */
 export interface RunningModel { name: string; contextLength: number; sizeVramBytes: number | null; resident: boolean; expiresAt: string | null }
 
@@ -95,14 +98,41 @@ export interface RuntimeState {
   detail: string
   connected: boolean
   busy: string
+  /** 启动内置模型时 llama-server 最近一句进度；没有在启动就是空串。 */
+  progress: string
+  /** 模型目录清单版本号；删除 / 下载完成 / 外部文件变化时变。 */
+  modelsRevision: number
   canControl: boolean
   running: RunningModel[]
+}
+
+/** 可选 GPU 扩展包的状态；bundled 表示安装包已经内置，不需要下载。 */
+export interface GpuRuntimeState {
+  state: 'bundled' | 'installed' | 'stale' | 'missing' | 'unsupported'
+  installed: boolean
+  bundled: boolean
+  hasVulkan: boolean
+  prompt: boolean
+  version: string
+  llamaBuild: string
+  sizeBytes: number
+  directory: string
+  busy: boolean
+  phase: string
+  progress: number
+  error: string
+}
+
+export interface GpuRuntimeActionResult {
+  ok: boolean
+  message: string
+  status: GpuRuntimeState
 }
 
 /** 一次启动 / 关闭的结果；message 是能直接给用户看的一句话。 */
 export interface RuntimeOpResult { ok: boolean; model: string; message: string; contextLength: number }
 
-export interface ChatModels { backend: string; backendDetail: string; models: string[]; embeddedReady: boolean; loaded: string[]; busy: string }
+export interface ChatModels { backend: string; backendDetail: string; models: string[]; embeddedReady: boolean; loaded: string[]; busy: string; revision: number }
 
 /** 模型下载目录的状态；freeBytes 是当前目录所在磁盘的剩余空间。 */
 export interface ModelDirectoryState {
@@ -120,7 +150,7 @@ export interface ModelDirectorySaveResult {
   directory: ModelDirectoryState
 }
 
-export interface ModelDeleteResult { ok: boolean; message: string }
+export interface ModelDeleteResult { ok: boolean; message: string; revision?: number }
 
 
 export interface StreamChunk { type: 'delta' | 'done' | 'error'; text?: string; result?: ChatResult }
@@ -128,7 +158,56 @@ export interface ChatResult { text: string; completed: boolean; cancelled: boole
 
 export type BackendChoice = 'auto' | 'embedded' | 'ollama' | 'edge0'
 
-export interface AppSettings { theme: 'system' | 'light' | 'dark'; material: 'solid' | 'mica' | 'acrylic'; accent: string; backend: BackendChoice; autoCheckUpdate: boolean; autoDownloadUpdate: boolean; autoInstallOnQuit: boolean; updateChannel: 'stable' | 'beta'; deltaUpdate: boolean; agentNetwork: boolean }
+export interface AppSettings {
+  theme: 'system' | 'light' | 'dark'
+  material: 'solid' | 'mica' | 'acrylic'
+  accent: string
+  backend: BackendChoice
+  autoCheckUpdate: boolean
+  autoDownloadUpdate: boolean
+  autoInstallOnQuit: boolean
+  updateChannel: 'stable' | 'beta'
+  deltaUpdate: boolean
+  agentNetwork: boolean
+  /** 关闭主窗口时收进托盘；关掉后点关闭就是退出。 */
+  closeToTray: boolean
+  /** 同时下载数，1–3；改后重启应用生效。 */
+  downloadConcurrency: number
+  /** 单任务限速 KB/s；0 表示不限速。 */
+  downloadLimitKbps: number
+  /** 下载完成后弹应用内提示并请求任务栏注意。 */
+  notifyDownloadComplete: boolean
+  /** 内置推理窗口；0 表示按 Agent 预算自动（至少 12800）。 */
+  inferenceContext: number
+  /** GPU 层数；-1 表示按显存自动。 */
+  inferenceGpuLayers: number
+  /** 推理线程；0 表示按物理核自动。 */
+  inferenceThreads: number
+}
+
+export interface StorageOverview {
+  dataRoot: string
+  modelsDirectory: string
+  logsDirectory: string
+  updatesDirectory: string
+  logsBytes: number
+  updatesBytes: number
+  modelBytes: number
+  freeBytes: number
+  error: string
+}
+
+export interface StorageCleanupResult { removed: number; freedBytes: number; failed: string[] }
+
+export interface AutostartState {
+  supported: boolean
+  enabled: boolean
+  appPath: string
+  registeredPath: string
+  error: string
+}
+
+export interface AgentMemoryClearResult { sessions: number; noteFiles: number; failed: string[] }
 
 export interface UpdateAssetInfo { name: string; size: number; url: string }
 

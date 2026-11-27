@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowLeft, Check, FileText, ChevronDown, ChevronRight, Compass, Cpu, Download, ExternalLink, FolderOpen, Globe2, HardDrive, Info, Layers, Megaphone, Monitor, Moon, Palette, RefreshCw, Sun, Trash2, Waves } from 'lucide-react'
-import { api, getRuntimeVersion } from '../api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  AlertCircle, ArrowLeft, Bell, Check, ChevronDown, ChevronRight, Compass, Cpu, Download,
+  ExternalLink, FileText, FolderOpen, Gauge, Globe2, HardDrive, Keyboard, Layers, Megaphone,
+  Monitor, Moon, Palette, Power, RefreshCw, RotateCcw, Search, ShieldCheck, SlidersHorizontal,
+  Sun, Trash2, Waves, X,
+} from 'lucide-react'
+import { api, agentApi, getRuntimeVersion } from '../api'
 import { releaseHistory, releaseHistoryStable, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
-import type { AppSettings, Edge0State, HardwareProfile, ModelDirectoryState, ModelSourcesState, UpdateCheck, UpdateOutcome } from '../types'
+import type {
+  AgentMemoryInfo, AppSettings, AutostartState, Edge0State, GpuRuntimeState, HardwareProfile,
+  ModelDirectoryState, ModelSourcesState, StorageOverview, UpdateCheck, UpdateOutcome,
+} from '../types'
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 
@@ -15,43 +23,44 @@ const accents = [
   { name: '石墨', value: '#5b6472' },
 ]
 
-type SettingsSection = 'appearance' | 'inference' | 'sources' | 'storage' | 'update' | 'about' | 'updates'
+type SettingsGroupId = 'appearance' | 'inference' | 'storage' | 'agent' | 'update'
+type SettingsSection = SettingsGroupId | 'about' | 'updates'
 
 const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
   appearance: {
-    eyebrow: 'Appearance',
-    title: '外观与材质',
-    description: '主题、窗口材质与强调色。切换后立即生效，不重启窗口。',
+    eyebrow: 'Appearance & desktop',
+    title: '外观与交互',
+    description: '主题、窗口材质、强调色，以及关闭窗口和开机时的行为。切换外观立即生效，桌面行为按这里的开关执行。',
   },
   inference: {
-    eyebrow: 'Local inference',
-    title: '本地推理',
-    description: '当前设备的处理器、内存、显卡与推理预算；此页只读，不会修改系统设置。',
-  },
-  sources: {
-    eyebrow: 'Model sources',
-    title: '模型来源',
-    description: '选择参与模型库与下载的模型来源。四个来源可分别开关；关闭的来源不会发出请求，需要额外凭据的来源在开启后展开配置。',
+    eyebrow: 'Models & inference',
+    title: '模型与推理',
+    description: '推理后端、设备信息、显卡加速、内置推理高级参数、Edge0 连接与模型来源。高级参数改动要重启模型才生效。',
   },
   storage: {
-    eyebrow: 'Storage',
+    eyebrow: 'Storage & downloads',
     title: '存储与数据',
-    description: '模型下载目录可单独换到空间更大的盘；会话与界面偏好仍保存在本机数据目录，不写入系统目录。',
+    description: '数据与模型目录、磁盘占用、更新缓存与日志清理，以及下载并发、限速和完成通知。',
+  },
+  agent: {
+    eyebrow: 'Agent & network',
+    title: 'Agent 与联网',
+    description: '代理联网读取网页的授权，以及本机记忆的概览与清空。审计日志和项目经验不会被这里的按钮删掉。',
   },
   update: {
-    eyebrow: 'Version check',
-    title: '版本更新',
-    description: '打开应用时检查公开仓库的最新 Release；发现新版本就在后台下载并校验，下好后点一次「重启并升级」，应用退出、覆盖安装并自动回到新版。',
+    eyebrow: 'Updates & release notes',
+    title: '更新与公告',
+    description: '启动检查、自动下载、增量更新、测试通道、诊断与当前版本；更新公告在页脚单独展开。',
   },
   about: {
     eyebrow: 'About',
     title: '关于天枢',
-    description: '版本信息、应用框架与设计规范。',
+    description: '版本信息、应用框架、设计规范与上手指引。',
   },
   updates: {
     eyebrow: 'Release notes',
     title: '更新公告',
-    description: '收录 v1.0.0 起每个版本的完整公告。当前版本置顶，历史版本按主版本分组，展开版本即可看到当时的全部条目；只读，随安装包发布。',
+    description: '收录 v1.0.0 起每个版本的完整公告。当前版本置顶，历史版本按主版本分组；只读，随安装包发布。',
   },
 }
 
@@ -63,8 +72,33 @@ function materialLabel(value: AppSettings['material']) {
   return value === 'acrylic' ? '亚克力' : value === 'mica' ? '云母' : '纯色'
 }
 
+function backendLabel(value: AppSettings['backend']) {
+  return value === 'auto' ? '自动探测' : value === 'ollama' ? 'Ollama' : value === 'edge0' ? 'Edge0' : '内置 llama.cpp'
+}
+
 function cleanCpuName(name?: string) {
   return name?.replace(/\(R\)|\(TM\)/g, '').replace(/\s+/g, ' ').trim() || '正在读取硬件'
+}
+
+function Toggle({ checked, label, onChange, disabled = false }: {
+  checked: boolean
+  label: string
+  onChange: (next: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      className={`source-switch ${checked ? 'on' : ''}`}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="source-switch-knob" aria-hidden />
+    </button>
+  )
 }
 
 function SectionHeader({ section, onBack }: { section: SettingsSection; onBack: () => void }) {
@@ -85,73 +119,399 @@ function SectionHeader({ section, onBack }: { section: SettingsSection; onBack: 
   )
 }
 
-function AppearanceSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
+/* ── 外观与交互 ─────────────────────────────────────────────────────── */
+
+function AutostartSettings() {
+  const [state, setState] = useState<AutostartState | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void api.autostart().then(next => { if (alive) setState(next) })
+      .catch(() => { if (alive) setNote('读取开机自启状态失败，稍后重试。') })
+    return () => { alive = false }
+  }, [])
+
+  async function toggle(next: boolean) {
+    setBusy(true)
+    setNote('')
+    try {
+      setState(await api.setAutostart(next))
+      setNote(next ? '已写入当前用户的启动项，下次登录会启动天枢。' : '已移除当前用户的启动项。')
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '修改开机自启失败')
+    } finally { setBusy(false) }
+  }
+
+  const stale = state?.enabled && state.registeredPath &&
+    state.appPath && state.registeredPath.toLowerCase() !== state.appPath.toLowerCase()
+
   return (
     <section className="settings-card settings-detail-card">
       <div className="setting-row">
         <div className="setting-copy">
-          <div className="setting-name">主题</div>
-          <div className="setting-desc">跟随系统，或固定浅色 / 深色；切换后立即生效。</div>
+          <div className="setting-name">开机自启</div>
+          <div className="setting-desc">
+            登录 Windows 后自动启动天枢。写入当前用户的 <code>Run</code> 启动项，不需要管理员权限；关掉开关会删掉这一项。
+          </div>
         </div>
-        <div className="segmented" role="group" aria-label="主题">
-          <button type="button" className={settings.theme === 'system' ? 'active' : ''} onClick={() => onChange({ theme: 'system' })}><Monitor size={12} /> 跟随系统</button>
-          <button type="button" className={settings.theme === 'light' ? 'active' : ''} onClick={() => onChange({ theme: 'light' })}><Sun size={12} /> 浅色</button>
-          <button type="button" className={settings.theme === 'dark' ? 'active' : ''} onClick={() => onChange({ theme: 'dark' })}><Moon size={12} /> 深色</button>
-        </div>
+        <Toggle
+          checked={state?.enabled === true}
+          label="开机自启"
+          disabled={busy || !state?.supported}
+          onChange={next => void toggle(next)}
+        />
       </div>
-
       <div className="setting-row">
         <div className="setting-copy">
-          <div className="setting-name">窗口材质</div>
-          <div className="setting-desc">云母采用 Windows 11 原生色调，不显示壁纸纹理；亚克力会模糊壁纸并透出背景，为新安装默认；纯色模式不透视壁纸。</div>
+          <div className="setting-name">注册的客户端</div>
+          <div className="setting-desc">只注册安装版 Tianshu.exe；开发时单独启动的内核不会写启动项。</div>
         </div>
-        <div className="segmented" role="group" aria-label="窗口材质">
-          <button type="button" className={settings.material === 'mica' ? 'active' : ''} onClick={() => onChange({ material: 'mica' })}><Waves size={12} /> 云母</button>
-          <button type="button" className={settings.material === 'acrylic' ? 'active' : ''} onClick={() => onChange({ material: 'acrylic' })}><Layers size={12} /> 亚克力</button>
-          <button type="button" className={settings.material === 'solid' ? 'active' : ''} onClick={() => onChange({ material: 'solid' })}><Palette size={12} /> 纯色</button>
-        </div>
+        <code className="settings-path">{state?.registeredPath || state?.appPath || '正在读取…'}</code>
       </div>
+      {stale && <div className="settings-callout">启动项指向的位置和当前客户端不一致，通常是安装目录换过。关掉再打开一次开关即可重写。</div>}
+      {(state?.error || note) && <div className="settings-callout">{state?.error || note}</div>}
+    </section>
+  )
+}
 
+function AppearanceSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">主题</div>
+            <div className="setting-desc">跟随系统，或固定浅色 / 深色；切换后立即生效。</div>
+          </div>
+          <div className="segmented" role="group" aria-label="主题">
+            <button type="button" className={settings.theme === 'system' ? 'active' : ''} onClick={() => onChange({ theme: 'system' })}><Monitor size={12} /> 跟随系统</button>
+            <button type="button" className={settings.theme === 'light' ? 'active' : ''} onClick={() => onChange({ theme: 'light' })}><Sun size={12} /> 浅色</button>
+            <button type="button" className={settings.theme === 'dark' ? 'active' : ''} onClick={() => onChange({ theme: 'dark' })}><Moon size={12} /> 深色</button>
+          </div>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">窗口材质</div>
+            <div className="setting-desc">云母采用 Windows 11 原生色调，不显示壁纸纹理；亚克力会模糊壁纸并透出背景，为新安装默认；纯色模式不透视壁纸。</div>
+          </div>
+          <div className="segmented" role="group" aria-label="窗口材质">
+            <button type="button" className={settings.material === 'mica' ? 'active' : ''} onClick={() => onChange({ material: 'mica' })}><Waves size={12} /> 云母</button>
+            <button type="button" className={settings.material === 'acrylic' ? 'active' : ''} onClick={() => onChange({ material: 'acrylic' })}><Layers size={12} /> 亚克力</button>
+            <button type="button" className={settings.material === 'solid' ? 'active' : ''} onClick={() => onChange({ material: 'solid' })}><Palette size={12} /> 纯色</button>
+          </div>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">强调色</div>
+            <div className="setting-desc">默认 Miuix 蓝；仅替换强调色令牌，不引入第二套配色。</div>
+          </div>
+          <div className="swatches" role="group" aria-label="强调色">
+            {accents.map(accent => (
+              <button
+                key={accent.value}
+                type="button"
+                title={accent.name}
+                aria-label={accent.name}
+                className={`swatch ${settings.accent === accent.value ? 'active' : ''}`}
+                style={{ background: accent.value }}
+                onClick={() => onChange({ accent: accent.value })}
+              >
+                {settings.accent === accent.value && <Check size={12} color="white" />}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-callout">
+          若材质显示为纯色，请确认 Windows「设置 → 个性化 → 颜色 → 透明效果」已开启。
+          <button
+            type="button"
+            className="inline-link"
+            onClick={() => { void import('@tauri-apps/api/core').then(({ invoke }) => invoke('open_transparency_settings')).catch(() => { /* browser preview */ }) }}
+          >
+            打开设置
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-card settings-detail-card">
+        <div className="settings-detail-lead">
+          <span className="chip">桌面行为</span>
+          <span>只影响窗口与登录，不改系统级设置。</span>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">关闭窗口时收进托盘</div>
+            <div className="setting-desc">
+              默认开启：点关闭只隐藏主窗口，内核继续在后台跑，左键托盘图标恢复。关掉后点关闭会退出应用并停掉内核；托盘菜单里的「退出」始终是真正退出。
+            </div>
+          </div>
+          <Toggle
+            checked={settings.closeToTray}
+            label="关闭窗口时收进托盘"
+            onChange={next => onChange({ closeToTray: next })}
+          />
+        </div>
+      </section>
+
+      <AutostartSettings />
+    </>
+  )
+}
+
+/* ── 模型与推理 ─────────────────────────────────────────────────────── */
+
+function GpuRuntimeSettings() {
+  const [state, setState] = useState<GpuRuntimeState | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void api.gpuRuntime().then(next => { if (alive) setState(next) })
+      .catch(() => { if (alive) setNote('读取显卡加速组件状态失败，稍后重试。') })
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    if (!state?.busy) return
+    let alive = true
+    const timer = window.setInterval(() => {
+      void api.gpuRuntime().then(next => { if (alive) setState(next) }).catch(() => { /* 轮询失败时保留上一次状态 */ })
+    }, 800)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [state?.busy])
+
+  async function install() {
+    setBusy(true)
+    setNote('')
+    try {
+      const result = await api.installGpuRuntime()
+      setState(result.status)
+      setNote(result.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '安装显卡加速组件失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm('卸载显卡加速组件？下次启动模型会改用 CPU，不会影响模型文件。')) return
+    setBusy(true)
+    setNote('')
+    try {
+      const result = await api.removeGpuRuntime()
+      setState(result.status)
+      setNote(result.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '卸载显卡加速组件失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function cancel() {
+    try {
+      setState(await api.cancelGpuRuntime())
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '取消失败')
+    }
+  }
+
+  const phase: Record<string, string> = {
+    preparing: '准备下载',
+    downloading: '下载中',
+    verifying: '校验中',
+    installing: '安装中',
+    done: '已完成',
+    cancelled: '已取消',
+    error: '失败',
+  }
+  const installed = state?.state === 'installed'
+  const bundled = state?.state === 'bundled'
+  const canInstall = !!state && !bundled && !installed && state.hasVulkan && !state.busy
+  const progress = Math.round((state?.progress ?? 0) * 100)
+
+  return (
+    <section className="settings-card settings-detail-card">
+      <div className="settings-detail-lead">
+        <span className="chip">可选组件</span>
+        <span>这是 llama.cpp 的 Vulkan 后端，不包含显卡驱动；缺少 Vulkan 驱动时只能更新驱动。</span>
+      </div>
       <div className="setting-row">
         <div className="setting-copy">
-          <div className="setting-name">强调色</div>
-          <div className="setting-desc">默认 Miuix 蓝；仅替换强调色令牌，不引入第二套配色。</div>
+          <div className="setting-name">显卡加速组件</div>
+          <div className="setting-desc">
+            {bundled
+              ? '安装包已内置 Vulkan 运行时，启动模型时优先走显卡。'
+              : installed
+                ? `已安装 · ${state?.version || '当前版本'} · ${formatBytes(state?.sizeBytes ?? 0)}`
+                : state?.state === 'stale'
+                  ? '已安装的组件与当前版本不匹配，需要重新安装。'
+                  : state?.hasVulkan
+                    ? '未安装。下载后可在启动模型时使用显卡；约 33 MB。'
+                    : '未检测到 Vulkan 驱动。更新显卡驱动后，这里才能安装加速组件。'}
+          </div>
         </div>
-        <div className="swatches" role="group" aria-label="强调色">
-          {accents.map(accent => (
-            <button
-              key={accent.value}
-              type="button"
-              title={accent.name}
-              aria-label={accent.name}
-              className={`swatch ${settings.accent === accent.value ? 'active' : ''}`}
-              style={{ background: accent.value }}
-              onClick={() => onChange({ accent: accent.value })}
-            >
-              {settings.accent === accent.value && <Check size={12} color="white" />}
-            </button>
-          ))}
-        </div>
+        <span className={`chip ${bundled || installed ? 'success' : state?.hasVulkan ? '' : 'warn'}`}>
+          {bundled ? '已内置' : installed ? '已安装' : state?.state === 'stale' ? '需更新' : state?.hasVulkan ? '可安装' : '不可用'}
+        </span>
       </div>
 
-      <div className="settings-callout">
-        若材质显示为纯色，请确认 Windows「设置 → 个性化 → 颜色 → 透明效果」已开启。
-        <button
-          type="button"
-          className="inline-link"
-          onClick={() => { void import('@tauri-apps/api/core').then(({ invoke }) => invoke('open_transparency_settings')).catch(() => { /* browser preview */ }) }}
-        >
-          打开设置
-        </button>
+      {state?.busy && (
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">{phase[state.phase] || '安装中'}</div>
+            <div className="setting-desc">下载和校验完成前不会替换现有运行时。</div>
+          </div>
+          <span className="chip">{progress}%</span>
+        </div>
+      )}
+
+      {(state?.error || note) && <div className="settings-callout">{state?.error || note}</div>}
+
+      <div className="edge0-actions">
+        {canInstall && <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install()}><Download />安装显卡加速</button>}
+        {installed && <button type="button" className="btn ghost sm" disabled={busy} onClick={() => void remove()}><Trash2 />卸载</button>}
+        {state?.busy && <button type="button" className="btn ghost sm" onClick={() => void cancel()}>取消安装</button>}
       </div>
     </section>
   )
 }
 
-function InferenceSettings({ hardware, settings, onChange }: {
+function AdvancedInferenceSettings({ settings, onChange }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+}) {
+  const [gpuLayers, setGpuLayers] = useState(String(settings.inferenceGpuLayers))
+  const [threads, setThreads] = useState(String(settings.inferenceThreads))
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => { setGpuLayers(String(settings.inferenceGpuLayers)) }, [settings.inferenceGpuLayers])
+  useEffect(() => { setThreads(String(settings.inferenceThreads)) }, [settings.inferenceThreads])
+
+  function applyNumbers() {
+    const gpu = Number(gpuLayers)
+    const cpu = Number(threads)
+    onChange({
+      inferenceGpuLayers: Number.isFinite(gpu) ? Math.max(-1, Math.min(999, Math.trunc(gpu))) : -1,
+      inferenceThreads: Number.isFinite(cpu) ? Math.max(0, Math.min(128, Math.trunc(cpu))) : 0,
+    })
+  }
+
+  async function restartModel() {
+    setBusy(true)
+    setNote('')
+    try {
+      const state = await api.runtime()
+      if (state.kind !== 'embedded') {
+        setNote('当前运行的是 ' + (state.backend || '其它后端') + '，内置推理参数会在下次切到内置时生效。')
+        return
+      }
+      const running = state.running[0]
+      if (!running) {
+        setNote('当前没有驻留的内置模型；下次启动会按新参数加载。')
+        return
+      }
+      const unloaded = await api.unloadModel(running.name)
+      if (!unloaded.ok) { setNote(unloaded.message); return }
+      const loaded = await api.loadModel(running.name)
+      setNote(loaded.message)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '重启模型失败')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="settings-card settings-detail-card">
+      <div className="settings-detail-lead">
+        <span className="chip">高级参数</span>
+        <span>只在「内置 llama.cpp」后端生效；Ollama 与 Edge0 使用各自的参数。</span>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">上下文窗口</div>
+          <div className="setting-desc">容纳对话预算和单次回复的窗口。自动档按 Agent 预算算，最低 12800；调大会多占内存 / 显存。</div>
+        </div>
+        <select
+          className="settings-input settings-select"
+          aria-label="上下文窗口"
+          value={settings.inferenceContext}
+          onChange={e => onChange({ inferenceContext: Number(e.target.value) })}
+        >
+          <option value={0}>自动 · 12800</option>
+          <option value={16384}>16384 · 16K</option>
+          <option value={32768}>32768 · 32K</option>
+          <option value={65536}>65536 · 64K</option>
+          <option value={131072}>131072 · 128K</option>
+        </select>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">GPU 层数</div>
+          <div className="setting-desc">-1 表示按可用显存自动选；0 表示全部放 CPU。显存不够时先把层数调低。</div>
+        </div>
+        <div className="settings-number-group">
+          <input
+            className="settings-input settings-number"
+            type="number"
+            min={-1}
+            max={999}
+            value={gpuLayers}
+            aria-label="GPU 层数"
+            onChange={e => setGpuLayers(e.target.value)}
+            onBlur={applyNumbers}
+          />
+          <button type="button" className="btn ghost sm" onClick={() => { setGpuLayers('-1'); onChange({ inferenceGpuLayers: -1 }) }}>自动</button>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">推理线程</div>
+          <div className="setting-desc">0 表示由 llama.cpp 按物理核自动决定；手动设置时不要超过物理核数太多。</div>
+        </div>
+        <div className="settings-number-group">
+          <input
+            className="settings-input settings-number"
+            type="number"
+            min={0}
+            max={128}
+            value={threads}
+            aria-label="推理线程"
+            onChange={e => setThreads(e.target.value)}
+            onBlur={applyNumbers}
+          />
+          <button type="button" className="btn ghost sm" onClick={() => { setThreads('0'); onChange({ inferenceThreads: 0 }) }}>自动</button>
+        </div>
+      </div>
+      <div className="settings-actions">
+        <button type="button" className="btn primary sm" disabled={busy} onClick={() => void restartModel()}>
+          <RefreshCw className={busy ? 'spin' : ''} />重启当前模型
+        </button>
+        <button
+          type="button"
+          className="btn ghost sm"
+          onClick={() => onChange({ inferenceContext: 0, inferenceGpuLayers: -1, inferenceThreads: 0 })}
+        >
+          <RotateCcw />恢复自动
+        </button>
+      </div>
+      {note && <div className="settings-callout">{note}</div>}
+    </section>
+  )
+}
+
+function InferenceSettings({ hardware, settings, onChange, onSourcesChange }: {
   hardware: HardwareProfile | null
   settings: AppSettings
   onChange: (patch: Partial<AppSettings>) => void
+  onSourcesChange: (state: ModelSourcesState) => void
 }) {
   const [edge0, setEdge0] = useState<Edge0State | null>(null)
   const [endpoint, setEndpoint] = useState('http://127.0.0.1:8000')
@@ -255,6 +615,9 @@ function InferenceSettings({ hardware, settings, onChange }: {
         </div>
       </section>
 
+      <GpuRuntimeSettings />
+      <AdvancedInferenceSettings settings={settings} onChange={onChange} />
+
       <section className="settings-card settings-detail-card">
         <div className="edge0-head">
           <div>
@@ -292,9 +655,13 @@ function InferenceSettings({ hardware, settings, onChange }: {
         {edge0 && <div className="edge0-status"><i className={`status-dot ${edge0Online ? '' : 'off'}`} />{edge0.status.detail}</div>}
         {note && <div className="settings-note" style={{ paddingLeft: 0 }}>{note}</div>}
       </section>
+
+      <SourcesSettings onStateChange={onSourcesChange} />
     </>
   )
 }
+
+/* ── 模型来源 ───────────────────────────────────────────────────────── */
 
 function SourcesSettings({ onStateChange }: { onStateChange: (state: ModelSourcesState) => void }) {
   const [state, setState] = useState<ModelSourcesState | null>(null)
@@ -454,38 +821,169 @@ function SourcesSettings({ onStateChange }: { onStateChange: (state: ModelSource
   )
 }
 
-function StorageSettings() {
+/* ── 存储与数据 ─────────────────────────────────────────────────────── */
+
+function DownloadBehaviorSettings({ settings, onChange }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+}) {
+  const [limit, setLimit] = useState(String(settings.downloadLimitKbps))
+  useEffect(() => { setLimit(String(settings.downloadLimitKbps)) }, [settings.downloadLimitKbps])
+
+  function applyLimit() {
+    const value = Number(limit)
+    onChange({ downloadLimitKbps: Number.isFinite(value) ? Math.max(0, Math.min(1048576, Math.trunc(value))) : 0 })
+  }
+
+  return (
+    <section className="settings-card settings-detail-card">
+      <div className="settings-detail-lead">
+        <span className="chip">下载与通知</span>
+        <span>并发数按应用启动时读取，改完要重启天枢；限速对每个下载任务单独生效。</span>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">同时下载数</div>
+          <div className="setting-desc">默认 1 路。调到 2–3 路会同时占用多个模型源的连接；重启应用后生效。</div>
+        </div>
+        <div className="segmented" role="group" aria-label="同时下载数">
+          {[1, 2, 3].map(value => (
+            <button
+              key={value}
+              type="button"
+              className={settings.downloadConcurrency === value ? 'active' : ''}
+              onClick={() => onChange({ downloadConcurrency: value })}
+            >
+              {value} 路
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">单任务限速</div>
+          <div className="setting-desc">单位 KB/s；0 表示不限速。例如 2048 约等于 2 MB/s。保存后对下一个开始的任务生效。</div>
+        </div>
+        <div className="settings-number-group">
+          <input
+            className="settings-input settings-number"
+            type="number"
+            min={0}
+            max={1048576}
+            value={limit}
+            aria-label="单任务限速"
+            onChange={e => setLimit(e.target.value)}
+            onBlur={applyLimit}
+          />
+          <span className="settings-unit">KB/s</span>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">下载完成通知</div>
+          <div className="setting-desc">下载完成后弹一条应用内提示，并请求任务栏注意；不会调用系统通知中心。</div>
+        </div>
+        <Toggle
+          checked={settings.notifyDownloadComplete}
+          label="下载完成通知"
+          onChange={next => onChange({ notifyDownloadComplete: next })}
+        />
+      </div>
+    </section>
+  )
+}
+
+function StorageSettings({ settings, onChange, onReset }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+  onReset: (next: AppSettings) => void
+}) {
   const [directory, setDirectory] = useState<ModelDirectoryState | null>(null)
+  const [overview, setOverview] = useState<StorageOverview | null>(null)
   const [path, setPath] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
 
-  useEffect(() => {
+  function reload() {
     let alive = true
-    void api.modelDirectory().then(state => {
+    void Promise.all([api.modelDirectory(), api.storage()]).then(([dir, store]) => {
       if (!alive) return
-      setDirectory(state)
-      setPath(state.current)
-    }).catch(() => { if (alive) setNote('读取模型目录失败，稍后重试。') })
+      setDirectory(dir)
+      setPath(current => current || dir.current)
+      setOverview(store)
+    }).catch(() => { if (alive) setNote('读取存储信息失败，稍后重试。') })
     return () => { alive = false }
-  }, [])
+  }
+
+  useEffect(reload, [])
 
   async function save(reset = false) {
-    setBusy(true)
+    setBusy('directory')
     setNote('')
     try {
       const result = await api.saveModelDirectory(reset ? '' : path.trim())
       if (result.directory) setDirectory(result.directory)
       if (result.ok) setPath(result.directory?.current ?? '')
       setNote(result.message)
+      setOverview(await api.storage().catch(() => overview))
     } catch (e) {
       setNote(e instanceof Error ? e.message : '保存模型目录失败')
-    } finally {
-      setBusy(false)
+    } finally { setBusy('') }
+  }
+
+  async function cleanupUpdates() {
+    if (!window.confirm('删除已下载的安装包、增量包和检查缓存？不会影响模型、会话与设置。')) return
+    setBusy('updates')
+    setNote('')
+    try {
+      const result = await api.cleanupUpdate()
+      setNote(result.failed.length > 0
+        ? `已清理 ${result.removed} 个文件、释放 ${formatBytes(result.freedBytes)}；有 ${result.failed.length} 个文件被占用，关闭应用后再清理一次。`
+        : `已清理 ${result.removed} 个更新缓存文件，释放 ${formatBytes(result.freedBytes)}。`)
+      setOverview(await api.storage().catch(() => overview))
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '清理更新缓存失败')
+    } finally { setBusy('') }
+  }
+
+  async function cleanupLogs() {
+    if (!window.confirm('删除 logs 目录下的运行日志？审计日志（agent-audit.jsonl）不会被删除。')) return
+    setBusy('logs')
+    setNote('')
+    try {
+      const result = await api.cleanupLogs()
+      setNote(result.failed.length > 0
+        ? `已删除 ${result.removed} 个日志、释放 ${formatBytes(result.freedBytes)}；${result.failed.join('；')}`
+        : `已删除 ${result.removed} 个日志，释放 ${formatBytes(result.freedBytes)}。`)
+      setOverview(await api.storage().catch(() => overview))
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '清理运行日志失败')
+    } finally { setBusy('') }
+  }
+
+  async function reveal(kind: 'data' | 'logs' | 'models' | 'updates') {
+    setNote('')
+    try {
+      await api.revealStorage(kind)
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '打不开目录')
     }
   }
 
-  const free = directory && directory.freeBytes > 0 ? formatBytes(directory.freeBytes) : '—'
+  async function resetAll() {
+    if (!window.confirm('恢复所有设置到默认值？会重置主题、推理参数、下载行为、更新开关与联网授权；模型、会话和记忆不会删除。')) return
+    setBusy('reset')
+    setNote('')
+    try {
+      const next = await api.resetSettings()
+      onReset(next)
+      setNote('设置已恢复默认；内置推理参数在下次启动模型时生效。')
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '恢复默认设置失败')
+    } finally { setBusy('') }
+  }
+
+  const free = overview && overview.freeBytes > 0 ? formatBytes(overview.freeBytes) : '—'
 
   return (
     <>
@@ -493,9 +991,12 @@ function StorageSettings() {
         <div className="setting-row">
           <div className="setting-copy">
             <div className="setting-name">数据目录</div>
-            <div className="setting-desc">会话、界面偏好与默认模型目录都在这里；模型可以单独换到别的盘。</div>
+            <div className="setting-desc">会话、界面偏好、日志与默认模型目录都在这里；模型可以单独换到别的盘。</div>
           </div>
-          <code className="settings-path">%APPDATA%\ModelDock</code>
+          <div className="settings-row-end">
+            <code className="settings-path">{overview?.dataRoot || '%APPDATA%\\ModelDock'}</code>
+            <button type="button" className="btn ghost sm" onClick={() => void reveal('data')}><FolderOpen />打开</button>
+          </div>
         </div>
 
         <div className="setting-row">
@@ -516,34 +1017,86 @@ function StorageSettings() {
               aria-label="模型下载目录"
               spellCheck={false}
             />
-            <button type="button" className="btn primary sm" disabled={busy || !path.trim()} onClick={() => void save()}>
-              <Check />{busy ? '保存中…' : '保存'}
+            <button type="button" className="btn primary sm" disabled={busy === 'directory' || !path.trim()} onClick={() => void save()}>
+              <Check />{busy === 'directory' ? '保存中…' : '保存'}
             </button>
-            <button type="button" className="btn ghost sm" disabled={busy || !directory?.custom} onClick={() => void save(true)}>
+            <button type="button" className="btn ghost sm" disabled={busy === 'directory' || !directory?.custom} onClick={() => void save(true)}>
               恢复默认
             </button>
+            <button type="button" className="btn ghost sm" onClick={() => void reveal('models')}><FolderOpen />打开</button>
+          </div>
+        </div>
+
+        {(overview || directory) && (
+          <div className="settings-stat-grid">
+            <div className="settings-stat"><span>模型占用</span><strong>{formatBytes(overview?.modelBytes ?? 0)}</strong></div>
+            <div className="settings-stat"><span>更新缓存</span><strong>{formatBytes(overview?.updatesBytes ?? 0)}</strong></div>
+            <div className="settings-stat"><span>运行日志</span><strong>{formatBytes(overview?.logsBytes ?? 0)}</strong></div>
+            <div className="settings-stat"><span>模型盘剩余</span><strong>{free}</strong></div>
+          </div>
+        )}
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">日志目录</div>
+            <div className="setting-desc">更新日志、内置推理日志与审计日志；清空只删 <code>*.log</code>。</div>
+          </div>
+          <div className="settings-row-end">
+            <code className="settings-path">{overview?.logsDirectory || '%APPDATA%\\ModelDock\\logs'}</code>
+            <button type="button" className="btn ghost sm" onClick={() => void reveal('logs')}><FolderOpen />打开</button>
           </div>
         </div>
 
         <div className="setting-row">
           <div className="setting-copy">
-            <div className="setting-name">当前落点</div>
-            <div className="setting-desc">下载、启动与剩余空间都按这个目录计算。</div>
+            <div className="setting-name">清理更新缓存</div>
+            <div className="setting-desc">删除已下载的安装包、增量包与检查缓存，释放磁盘空间；不会动模型、会话和设置。</div>
           </div>
-          <code className="settings-path">{directory?.current || '正在读取…'}</code>
+          <button type="button" className="btn ghost sm" disabled={busy === 'updates'} onClick={() => void cleanupUpdates()}>
+            <Trash2 />{busy === 'updates' ? '清理中…' : '清理'}
+          </button>
         </div>
 
         <div className="setting-row">
           <div className="setting-copy">
-            <div className="setting-name">所在磁盘剩余</div>
-            <div className="setting-desc">按模型目录所在盘计算，不是数据目录所在盘。</div>
+            <div className="setting-name">清理运行日志</div>
+            <div className="setting-desc">删除 logs 目录下的 *.log；正在写入的文件会跳过，关掉应用后可再清一次。</div>
           </div>
-          <span className="chip">{free}</span>
+          <button type="button" className="btn ghost sm" disabled={busy === 'logs'} onClick={() => void cleanupLogs()}>
+            <Trash2 />{busy === 'logs' ? '清理中…' : '清理'}
+          </button>
         </div>
 
-        {directory?.error && <div className="settings-callout">{directory.error}</div>}
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">更新包目录</div>
+            <div className="setting-desc">安装包和增量包先落在这里，校验通过后才执行安装。</div>
+          </div>
+          <div className="settings-row-end">
+            <code className="settings-path">{overview?.updatesDirectory || '%APPDATA%\\ModelDock\\updates'}</code>
+            <button type="button" className="btn ghost sm" onClick={() => void reveal('updates')}><FolderOpen />打开</button>
+          </div>
+        </div>
+
+        {overview?.error && <div className="settings-callout">{overview.error}</div>}
         {note && <div className="settings-note" style={{ paddingLeft: 0 }}>{note}</div>}
       </section>
+
+      <DownloadBehaviorSettings settings={settings} onChange={onChange} />
+
+      <section className="settings-card settings-detail-card">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">恢复默认设置</div>
+            <div className="setting-desc">所有界面与行为偏好回到安装时默认；模型、会话、记忆和已下载文件都不动。</div>
+          </div>
+          <button type="button" className="btn ghost sm settings-danger" disabled={busy === 'reset'} onClick={() => void resetAll()}>
+            <RotateCcw />{busy === 'reset' ? '恢复中…' : '恢复默认'}
+          </button>
+        </div>
+        <div className="settings-callout">恢复默认会重写 <code>%APPDATA%\ModelDock</code> 下的偏好文件；不会改版本、不会触发更新。</div>
+      </section>
+
       <p className="settings-note">
         填绝对路径后保存，例如 <code>D:\Models\ModelDock</code>。已有模型不会自动搬迁；下载进行中不能切换目录。
         旧目录里的文件仍留在原处，需要时手动移动过来再回到「我的模型」刷新。
@@ -552,7 +1105,89 @@ function StorageSettings() {
   )
 }
 
-/** 检查时间只显示时:分，避免用户以为是旧结果。 */
+/* ── Agent 与联网 ───────────────────────────────────────────────────── */
+
+function AgentSettings({ settings, onChange }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+}) {
+  const [memory, setMemory] = useState<AgentMemoryInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  function loadMemory() {
+    void agentApi.memory().then(setMemory).catch(() => setNote('读取记忆失败，稍后重试。'))
+  }
+  useEffect(loadMemory, [])
+
+  async function clearAll() {
+    if (!window.confirm('清空当前工作目录的会话记忆与备忘？审计日志和项目经验（.tianshu/lessons.md）不会删除。')) return
+    setBusy(true)
+    setNote('')
+    try {
+      const result = await agentApi.clearMemory()
+      setNote(result.failed.length > 0
+        ? `已清空 ${result.sessions} 份会话记忆、${result.noteFiles} 份备忘；部分文件删不掉：${result.failed.join('；')}`
+        : `已清空 ${result.sessions} 份会话记忆、${result.noteFiles} 份备忘。`)
+      loadMemory()
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '清空记忆失败')
+    } finally { setBusy(false) }
+  }
+
+  const workspaceNotes = memory?.notes.workspace.length ?? 0
+  const globalNotes = memory?.notes.global.length ?? 0
+  const sessions = memory?.sessions.length ?? 0
+
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">允许代理联网读取网页</div>
+            <div className="setting-desc">
+              默认关闭。打开后，代理派出的 searcher 子体可以用 web_fetch 读公开网页的正文与链接（不提交表单、不登录、不下载文件、不带 cookie）；主代理本身仍然没有联网工具，要上网必须派子体，这样范围、次数与超时都落在一个只读、有预算、可随时停止的任务上。
+              关闭时 web_fetch 会被直接拒绝，一个请求都不会发出去。
+            </div>
+          </div>
+          <Toggle
+            checked={settings.agentNetwork}
+            label="允许代理联网读取网页"
+            onChange={next => onChange({ agentNetwork: next })}
+          />
+        </div>
+      </section>
+
+      <section className="settings-card settings-detail-card">
+        <div className="sources-head">
+          <div>
+            <div className="setting-name">本机记忆</div>
+            <div className="setting-desc">当前工作目录：<code>{memory?.workspace || '%APPDATA%\\ModelDock\\workspace'}</code></div>
+          </div>
+          <span className="chip">{sessions} 份会话记忆</span>
+        </div>
+        <div className="settings-stat-grid settings-stat-grid-three">
+          <div className="settings-stat"><span>会话记忆</span><strong>{sessions}</strong></div>
+          <div className="settings-stat"><span>工作目录备忘</span><strong>{workspaceNotes}</strong></div>
+          <div className="settings-stat"><span>全局备忘</span><strong>{globalNotes}</strong></div>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="btn ghost sm settings-danger" disabled={busy} onClick={() => void clearAll()}>
+            <Trash2 />{busy ? '清空中…' : '清空记忆'}
+          </button>
+          <button type="button" className="btn ghost sm" onClick={loadMemory}><RefreshCw />刷新</button>
+        </div>
+        <div className="settings-callout">
+          清空范围：会话记忆文件、当前工作目录备忘、全局备忘。审计日志（agent-audit.jsonl）与项目经验（<code>.tianshu/lessons.md</code>）保留；这两个不是记忆，不能跟着按钮一起消失。
+        </div>
+        {note && <div className="settings-note" style={{ paddingLeft: 0 }}>{note}</div>}
+      </section>
+    </>
+  )
+}
+
+/* ── 更新与公告 ─────────────────────────────────────────────────────── */
+
 function formatClock(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '刚刚'
@@ -565,12 +1200,10 @@ function VersionUpdateSettings({ settings, onChange }: {
 }) {
   const [check, setCheck] = useState<UpdateCheck | null>(null)
   const [checking, setChecking] = useState(false)
-  const [cleaning, setCleaning] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [noticeTone, setNoticeTone] = useState<'info' | 'error'>('info')
   const [outcome, setOutcome] = useState<UpdateOutcome | null>(null)
-  // 被「忽略此版本」跳过的版本号：存本地，这里给它一个看得见、能撤销的入口。
   const [skippedVersion, setSkippedVersion] = useState(() => {
     try { return localStorage.getItem('stardock.update.skipped') ?? '' } catch { return '' }
   })
@@ -604,16 +1237,13 @@ function VersionUpdateSettings({ settings, onChange }: {
     return () => { alive = false }
   }, [])
 
-  // 换回正式版要用户点头：这里存的是「等他决定」的那个正式版号，空串表示没有在问。
   const [stepBack, setStepBack] = useState('')
   async function switchChannel() {
     const next = settings.updateChannel === 'beta' ? 'stable' : 'beta'
     onChange({ updateChannel: next })
     setStepBack('')
-    // 服务端按设置里的通道取数，而设置是异步落盘的：等这次保存完成再检查，免得拿到另一条通道的缓存。
     const saved = await api.saveSettings({ ...settings, updateChannel: next }).catch(() => null)
     const result = await runCheck()
-    // 从测试版切回正式版时，最新的正式版可能比当前的低。普通检查不会主动提出往回装，所以在这里问一次。
     if (saved && result && next === 'stable' && APP_VERSION.includes('-') &&
         !result.available && !result.error && result.latestVersion) {
       setStepBack(result.latestVersion)
@@ -673,25 +1303,6 @@ function VersionUpdateSettings({ settings, onChange }: {
       .catch(() => { window.open(url, '_blank', 'noreferrer') })
   }
 
-  async function cleanupCache() {
-    if (!window.confirm('删除已下载的安装包、增量包和检查缓存？不会影响模型、会话与设置。')) return
-    setCleaning(true)
-    setError('')
-    setNotice('')
-    try {
-      const result = await api.cleanupUpdate()
-      setCheck(null)
-      await runCheck()
-      if (result.failed.length > 0) {
-        showNotice(`已清理 ${result.removed} 个文件、释放 ${formatBytes(result.freedBytes)}；有 ${result.failed.length} 个文件被占用，关闭应用后再清理一次。`)
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '清理更新缓存失败')
-    } finally {
-      setCleaning(false)
-    }
-  }
-
   async function copyDiagnostics() {
     setError('')
     setNotice('')
@@ -714,16 +1325,7 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="setting-name">启动时自动检查更新</div>
             <div className="setting-desc">打开应用后读取公开仓库的最新 Release，发现新版本才提示；关闭后应用不会主动请求 GitHub。</div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.autoCheckUpdate}
-            aria-label="启动时自动检查更新"
-            className={`source-switch ${settings.autoCheckUpdate ? 'on' : ''}`}
-            onClick={() => onChange({ autoCheckUpdate: !settings.autoCheckUpdate })}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
+          <Toggle checked={settings.autoCheckUpdate} label="启动时自动检查更新" onChange={next => onChange({ autoCheckUpdate: next })} />
         </div>
 
         <div className="setting-row">
@@ -731,16 +1333,7 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="setting-name">发现新版本时自动下载</div>
             <div className="setting-desc">默认开启：在应用运行时就把安装包下好并校验，你只需要在方便的时候重启完成升级；关闭后改为手动点“下载”。</div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.autoDownloadUpdate}
-            aria-label="发现新版本时自动下载"
-            className={`source-switch ${settings.autoDownloadUpdate ? 'on' : ''}`}
-            onClick={() => onChange({ autoDownloadUpdate: !settings.autoDownloadUpdate })}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
+          <Toggle checked={settings.autoDownloadUpdate} label="发现新版本时自动下载" onChange={next => onChange({ autoDownloadUpdate: next })} />
         </div>
 
         <div className="setting-row">
@@ -748,36 +1341,7 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="setting-name">优先使用增量更新</div>
             <div className="setting-desc">默认开启：升级时只下载改动过的文件（约几 MB），在退出后覆盖并校验；增量不可用或还原失败会自动改用完整安装包。</div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.deltaUpdate}
-            aria-label="优先使用增量更新"
-            className={`source-switch ${settings.deltaUpdate ? 'on' : ''}`}
-            onClick={() => onChange({ deltaUpdate: !settings.deltaUpdate })}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
-        </div>
-
-        <div className="setting-row">
-          <div className="setting-copy">
-            <div className="setting-name">允许代理联网读取网页</div>
-            <div className="setting-desc">
-              默认关闭。打开后，代理派出的 searcher 子体可以用 web_fetch 读公开网页的正文与链接（不提交表单、不登录、不下载文件、不带 cookie）；主代理本身仍然没有联网工具，要上网必须派子体，这样范围、次数与超时都落在一个只读、有预算、可随时停止的任务上。
-              关闭时 web_fetch 会被直接拒绝，一个请求都不会发出去。
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.agentNetwork}
-            aria-label="允许代理联网读取网页"
-            className={`source-switch ${settings.agentNetwork ? 'on' : ''}`}
-            onClick={() => onChange({ agentNetwork: !settings.agentNetwork })}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
+          <Toggle checked={settings.deltaUpdate} label="优先使用增量更新" onChange={next => onChange({ deltaUpdate: next })} />
         </div>
 
         <div className="setting-row">
@@ -789,16 +1353,7 @@ function VersionUpdateSettings({ settings, onChange }: {
                 : '已关闭：只检测正式版。开启后会检测到版本号带 beta 的测试版，可能不够稳定。切换后立即重新检查。'}
             </div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.updateChannel === 'beta'}
-            aria-label="接收测试版更新"
-            className={`source-switch ${settings.updateChannel === 'beta' ? 'on' : ''}`}
-            onClick={() => void switchChannel()}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
+          <Toggle checked={settings.updateChannel === 'beta'} label="接收测试版更新" onChange={() => void switchChannel()} />
         </div>
 
         <div className="setting-row">
@@ -806,26 +1361,7 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="setting-name">退出应用时自动安装</div>
             <div className="setting-desc">默认开启：安装包已下好并校验通过时，从托盘菜单“退出”会先装完再退出，下次打开就是新版；关闭后只在点“重启并升级”时安装。</div>
           </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.autoInstallOnQuit}
-            aria-label="退出应用时自动安装"
-            className={`source-switch ${settings.autoInstallOnQuit ? 'on' : ''}`}
-            onClick={() => onChange({ autoInstallOnQuit: !settings.autoInstallOnQuit })}
-          >
-            <span className="source-switch-knob" aria-hidden />
-          </button>
-        </div>
-
-        <div className="setting-row">
-          <div className="setting-copy">
-            <div className="setting-name">清理更新缓存</div>
-            <div className="setting-desc">删除已下载的安装包、增量包与检查缓存，释放磁盘空间；不会动模型、会话和设置。</div>
-          </div>
-          <button type="button" className="btn ghost sm" disabled={cleaning} onClick={() => void cleanupCache()}>
-            <Trash2 aria-hidden />{cleaning ? '清理中…' : '清理'}
-          </button>
+          <Toggle checked={settings.autoInstallOnQuit} label="退出应用时自动安装" onChange={next => onChange({ autoInstallOnQuit: next })} />
         </div>
 
         <div className="setting-row">
@@ -906,9 +1442,7 @@ function VersionUpdateSettings({ settings, onChange }: {
 
       {notice && (
         <div className={`settings-callout ${noticeTone === 'error' ? 'update-error-line' : 'update-notice-line'}`}>
-          {noticeTone === 'error'
-            ? <AlertCircle size={14} aria-hidden />
-            : <Check size={14} aria-hidden />}
+          {noticeTone === 'error' ? <AlertCircle size={14} aria-hidden /> : <Check size={14} aria-hidden />}
           {notice}
         </div>
       )}
@@ -977,7 +1511,6 @@ function VersionUpdateSettings({ settings, onChange }: {
             <div className="update-asset-actions">
               {ready && blocked ? (
                 <>
-                  {/* 被拒后主按钮不能再是“重启并升级”：点了只会原样再被拒一次。 */}
                   {portableBlocked && (
                     <button type="button" className="btn primary sm" disabled={busy} onClick={() => void install(true)}>
                       <RefreshCw aria-hidden />重试增量升级
@@ -1002,12 +1535,7 @@ function VersionUpdateSettings({ settings, onChange }: {
                 </button>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="btn primary sm"
-                    disabled={busy || downloading || !check.asset}
-                    onClick={() => void start()}
-                  >
+                  <button type="button" className="btn primary sm" disabled={busy || downloading || !check.asset} onClick={() => void start()}>
                     <Download aria-hidden />{downloading ? '下载中…' : download?.state === 'failed' ? '重新下载' : '开始下载'}
                   </button>
                   {downloading && (
@@ -1088,10 +1616,13 @@ function VersionUpdateSettings({ settings, onChange }: {
       <div className="settings-callout">
         版本检查只请求公开仓库 <strong>modeldock-ui</strong> 的 Release 接口；不带令牌、不上报设备信息。安装包下载到
         %APPDATA%\ModelDock\updates，校验通过后才会执行应用内安装。自动检查与自动下载默认开启，可在此页关闭。绿色包（免安装版）不支持应用内升级。
+        更新缓存的清理已放到「存储与数据」，避免更新页同时承担维护动作。
       </div>
     </>
   )
 }
+
+/* ── 关于与公告 ─────────────────────────────────────────────────────── */
 
 function AboutSettings({ onReplayTour }: { onReplayTour: () => void }) {
   return (
@@ -1108,6 +1639,7 @@ function AboutSettings({ onReplayTour }: { onReplayTour: () => void }) {
         <div className="about-fact"><span>设计规范</span><strong>Miuix 蓝 #3482FF · 16dp 圆角</strong></div>
         <div className="about-fact"><span>窗口材质</span><strong>默认亚克力 · 云母原生色调 · 纯色不透明</strong></div>
         <div className="about-fact"><span>数据存储</span><strong>模型、会话与偏好均保存在本机</strong></div>
+        <div className="about-fact"><span>前端许可</span><strong>公开库 modeldock-ui；许可见仓库 LICENSE</strong></div>
         <div className="about-fact">
           <span>上手指引</span>
           <span>
@@ -1159,12 +1691,8 @@ function ReleaseSections({ sections }: { sections: ReleaseNoteSection[] }) {
 }
 
 function UpdateSettings({ channel }: { channel: 'stable' | 'beta' }) {
-  // 正式通道读正式版口径（同号 beta 已合并进来）；测试通道读全部版本，测试版各占一条。
   const history = channel === 'beta' ? releaseHistory : releaseHistoryStable
-  // 当前版本卡片也按通道取数：正式版通道下，3.15.0 这一条就是 beta.1 / beta.2 合并后的内容。
-  // 只有一种情况回退到全量数据——用户自己跑的就是测试版，本版公告必须能看。
-  const current =
-    history.flatMap(group => group.items).find(item => item.version === APP_VERSION)
+  const current = history.flatMap(group => group.items).find(item => item.version === APP_VERSION)
   const older = history
     .map(group => ({ ...group, items: group.items.filter(item => item.version !== APP_VERSION) }))
     .filter(group => group.items.length > 0)
@@ -1279,20 +1807,55 @@ function UpdateSettings({ channel }: { channel: 'stable' | 'beta' }) {
       </section>
 
       <div className="settings-callout">
-        更新公告随安装包离线发布；是否检查新版本在“版本更新”分组里开关，默认启动时检查一次公开仓库的 Release。运行新版本安装包覆盖安装即可；模型、会话与偏好保存在本机数据目录。
+        更新公告随安装包离线发布；是否检查新版本在“更新与公告”分组里开关，默认启动时检查一次公开仓库的 Release。运行新版本安装包覆盖安装即可；模型、会话与偏好保存在本机数据目录。
       </div>
     </>
   )
 }
 
-export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
+/* ── 设置首页 ───────────────────────────────────────────────────────── */
+
+type SearchEntry = { section: SettingsSection; group: string; title: string; keywords: string }
+
+const searchIndex: SearchEntry[] = [
+  { section: 'appearance', group: '外观与交互', title: '主题与深浅色', keywords: '主题 浅色 深色 跟随系统 外观' },
+  { section: 'appearance', group: '外观与交互', title: '窗口材质', keywords: '材质 亚克力 云母 纯色 透明 壁纸' },
+  { section: 'appearance', group: '外观与交互', title: '强调色', keywords: '强调色 颜色 配色 蓝' },
+  { section: 'appearance', group: '外观与交互', title: '关闭窗口时收进托盘', keywords: '托盘 关闭 退出 最小化 后台' },
+  { section: 'appearance', group: '外观与交互', title: '开机自启', keywords: '开机 自启 启动 登录 注册表 Run' },
+  { section: 'inference', group: '模型与推理', title: '推理后端', keywords: '后端 ollama edge0 内置 llama 自动' },
+  { section: 'inference', group: '模型与推理', title: '硬件与显存', keywords: '处理器 cpu 内存 显卡 显存 预算 硬件' },
+  { section: 'inference', group: '模型与推理', title: '显卡加速组件', keywords: 'gpu vulkan 加速 组件 安装 卸载' },
+  { section: 'inference', group: '模型与推理', title: '上下文窗口与 GPU 层数', keywords: '上下文 窗口 context gpu 层数 线程 高级参数 显存' },
+  { section: 'inference', group: '模型与推理', title: 'Edge0 连接', keywords: 'edge0 无界方舟 服务 地址 别名 权重' },
+  { section: 'inference', group: '模型与推理', title: '模型来源', keywords: '模型来源 魔搭 modelscope huggingface opencsg token' },
+  { section: 'storage', group: '存储与数据', title: '数据与模型目录', keywords: '目录 路径 数据 模型 换盘 磁盘 空间' },
+  { section: 'storage', group: '存储与数据', title: '清理更新缓存', keywords: '清理 更新 缓存 安装包 增量包 空间' },
+  { section: 'storage', group: '存储与数据', title: '清理运行日志', keywords: '日志 清理 log 审计' },
+  { section: 'storage', group: '存储与数据', title: '同时下载数与限速', keywords: '下载 并发 限速 速度 kb mb 同时' },
+  { section: 'storage', group: '存储与数据', title: '下载完成通知', keywords: '通知 下载完成 任务栏 提示' },
+  { section: 'storage', group: '存储与数据', title: '恢复默认设置', keywords: '恢复 默认 重置 reset' },
+  { section: 'agent', group: 'Agent 与联网', title: '代理联网读取网页', keywords: '联网 网页 web_fetch 代理 搜索 子体' },
+  { section: 'agent', group: 'Agent 与联网', title: '本机记忆与清空', keywords: '记忆 备忘 会话 清空 memory' },
+  { section: 'update', group: '更新与公告', title: '自动检查与自动下载', keywords: '更新 检查 自动下载 升级' },
+  { section: 'update', group: '更新与公告', title: '测试版通道', keywords: '测试版 beta 正式版 通道 灰度' },
+  { section: 'update', group: '更新与公告', title: '增量更新与退出安装', keywords: '增量 delta 退出 安装 重启' },
+  { section: 'update', group: '更新与公告', title: '更新诊断', keywords: '诊断 日志 复制 更新失败' },
+  { section: 'about', group: '关于', title: '关于天枢', keywords: '关于 版本 框架 许可 上手指引' },
+  { section: 'updates', group: '公告', title: '更新公告', keywords: '公告 release notes 历史 版本说明' },
+]
+
+export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTour }: {
   settings: AppSettings
   onChange: (patch: Partial<AppSettings>) => void
+  onReset: (next: AppSettings) => void
   hardware: HardwareProfile | null
   onReplayTour: () => void
 }) {
   const [section, setSection] = useState<SettingsSection | null>(null)
   const [sourceState, setSourceState] = useState<ModelSourcesState | null>(null)
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const accentLabel = accents.find(accent => accent.value === settings.accent)?.name ?? '自定义强调色'
   const cpuLabel = cleanCpuName(hardware?.cpuName)
   const inferenceSummary = hardware
@@ -1307,55 +1870,74 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
     return () => { alive = false }
   }, [])
 
-  const categories: Array<{
-    id: SettingsSection
+  // Esc 回到设置首页；Ctrl+, 在设置内聚焦搜索框，已经是设置页时不再重复跳转。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && section) {
+        setSection(null)
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault()
+        setSection(null)
+        window.setTimeout(() => searchRef.current?.focus(), 0)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [section])
+
+  const groups: Array<{
+    id: SettingsGroupId
     title: string
     summary: string
     icon: typeof Palette
+    topics: string[]
   }> = [
     {
       id: 'appearance',
-      title: '外观与材质',
+      title: '外观与交互',
       summary: `${themeLabel(settings.theme)} · ${materialLabel(settings.material)} · ${accentLabel}`,
       icon: Palette,
+      topics: ['主题与材质', '强调色', settings.closeToTray ? '关闭收进托盘' : '关闭即退出', '开机自启'],
     },
     {
       id: 'inference',
-      title: '本地推理',
-      summary: inferenceSummary,
+      title: '模型与推理',
+      summary: `${inferenceSummary} · ${backendLabel(settings.backend)}`,
       icon: Cpu,
-    },
-    {
-      id: 'sources',
-      title: '模型来源',
-      summary: sourceState === null ? '正在读取模型来源' : sourceState.enabledCount === 0 ? '未启用任何来源' : sourceState.sources.some(source => source.enabled && !source.ready) ? `${sourceState.enabledCount} 个已启用 · 有来源待配置` : `${sourceState.enabledCount} 个来源已启用`,
-      icon: Globe2,
+      topics: ['推理后端', '硬件与显存', '显卡加速', '高级参数', 'Edge0', sourceState ? `${sourceState.enabledCount} 个来源` : '模型来源'],
     },
     {
       id: 'storage',
       title: '存储与数据',
-      summary: '模型目录可换盘 · 会话与偏好',
+      summary: `模型目录与占用 · ${settings.downloadConcurrency} 路下载 · ${settings.downloadLimitKbps > 0 ? `${settings.downloadLimitKbps} KB/s 限速` : '不限速'}`,
       icon: HardDrive,
+      topics: ['数据 / 模型目录', '清理缓存与日志', '下载并发与限速', settings.notifyDownloadComplete ? '完成通知开' : '完成通知关', '恢复默认'],
+    },
+    {
+      id: 'agent',
+      title: 'Agent 与联网',
+      summary: settings.agentNetwork ? '联网读取网页已开启 · 本机记忆' : '联网读取网页已关闭 · 本机记忆',
+      icon: ShieldCheck,
+      topics: ['联网读取', '会话记忆', '工作目录备忘', '清空记忆'],
     },
     {
       id: 'update',
-      title: '版本更新',
+      title: '更新与公告',
       summary: settings.autoCheckUpdate ? `启动时自动检查 · v${APP_VERSION}` : '自动检查已关闭',
       icon: RefreshCw,
-    },
-    {
-      id: 'about',
-      title: '关于天枢',
-      summary: `v${APP_VERSION} · Tauri 2 + React`,
-      icon: Info,
-    },
-    {
-      id: 'updates',
-      title: '更新公告',
-      summary: `v${APP_VERSION} · 全部历史`,
-      icon: Megaphone,
+      topics: ['自动检查', '测试通道', '增量更新', '退出安装', '更新诊断', '公告'],
     },
   ]
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return []
+    return searchIndex
+      .filter(item => `${item.title} ${item.keywords} ${item.group}`.toLowerCase().includes(q))
+      .slice(0, 10)
+  }, [query])
 
   if (section) {
     return (
@@ -1363,9 +1945,16 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
         <SectionHeader section={section} onBack={() => setSection(null)} />
         <div className="settings-detail-body">
           {section === 'appearance' && <AppearanceSettings settings={settings} onChange={onChange} />}
-          {section === 'inference' && <InferenceSettings hardware={hardware} settings={settings} onChange={onChange} />}
-          {section === 'sources' && <SourcesSettings onStateChange={setSourceState} />}
-          {section === 'storage' && <StorageSettings />}
+          {section === 'inference' && (
+            <InferenceSettings
+              hardware={hardware}
+              settings={settings}
+              onChange={onChange}
+              onSourcesChange={setSourceState}
+            />
+          )}
+          {section === 'storage' && <StorageSettings settings={settings} onChange={onChange} onReset={onReset} />}
+          {section === 'agent' && <AgentSettings settings={settings} onChange={onChange} />}
           {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} />}
           {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
           {section === 'updates' && <UpdateSettings channel={settings.updateChannel} />}
@@ -1376,36 +1965,92 @@ export function SettingsPage({ settings, onChange, hardware, onReplayTour }: {
 
   return (
     <div className="page">
-      <div className="page-head">
+      <div className="page-head settings-home-head">
         <div className="page-head-copy">
           <div className="eyebrow">Preferences</div>
           <h1 className="page-title">设置</h1>
-          <p className="page-sub">按功能分为七个分组，进入后仅处理对应设置；所有偏好仅保存在本机，不上传。</p>
+          <p className="page-sub">五组设置覆盖外观、推理、存储、Agent 与更新；可合并的入口已经收进同一组，低频项不再单独占一页。</p>
         </div>
       </div>
 
-      <div className="settings-index" data-tour="settings-index">
-        {categories.map(item => {
-          const Icon = item.icon
-          return (
+      <div className="settings-search-wrap">
+        <Search size={16} aria-hidden />
+        <input
+          ref={searchRef}
+          className="settings-search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="搜索设置，例如「托盘」「显存」「开机自启」「限速」"
+          aria-label="搜索设置"
+        />
+        {query && (
+          <button type="button" className="settings-search-clear" aria-label="清空搜索" onClick={() => setQuery('')}>
+            <X size={14} />
+          </button>
+        )}
+        <span className="settings-search-shortcut"><Keyboard size={12} />Ctrl+,</span>
+      </div>
+
+      {query.trim() ? (
+        <div className="settings-search-results" data-tour="settings-index">
+          {matches.length > 0 ? matches.map(item => (
             <button
               type="button"
-              key={item.id}
-              className="settings-menu-item"
-              aria-label={`打开${item.title}`}
-              onClick={() => setSection(item.id)}
+              key={`${item.section}-${item.title}`}
+              className="settings-search-hit"
+              onClick={() => { setSection(item.section); setQuery('') }}
             >
-              <span className="settings-menu-icon" aria-hidden><Icon size={19} /></span>
-              <span className="settings-menu-copy">
-                <span className="settings-menu-title">{item.title}</span>
-                <span className="settings-menu-summary">{item.summary}</span>
-              </span>
-              <ChevronRight className="settings-menu-chevron" size={18} aria-hidden />
+              <span className="settings-search-hit-group">{item.group}</span>
+              <span className="settings-search-hit-title">{item.title}</span>
+              <ChevronRight size={15} aria-hidden />
             </button>
-          )
-        })}
-      </div>
-      <p className="settings-index-note">偏好设置保存在 %APPDATA%\ModelDock；此页仅展示入口，不在单页堆叠全部选项。</p>
+          )) : (
+            <div className="settings-search-empty">没有匹配的设置项。换个词，或从下面五组入口进入。</div>
+          )}
+        </div>
+      ) : (
+        <div className="settings-group-grid" data-tour="settings-index">
+          {groups.map(item => {
+            const Icon = item.icon
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className="settings-group-card"
+                aria-label={`打开${item.title}`}
+                onClick={() => setSection(item.id)}
+              >
+                <span className="settings-menu-icon" aria-hidden><Icon size={19} /></span>
+                <span className="settings-group-copy">
+                  <span className="settings-menu-title">{item.title}</span>
+                  <span className="settings-menu-summary">{item.summary}</span>
+                  <span className="settings-group-topics">
+                    {item.topics.map(topic => <span className="settings-topic" key={topic}>{topic}</span>)}
+                  </span>
+                </span>
+                <ChevronRight className="settings-menu-chevron" size={18} aria-hidden />
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {!query.trim() && (
+        <p className="settings-index-note">偏好设置保存在 %APPDATA%\ModelDock；设置入口固定在导航底部，按 Ctrl+, 可随时打开。关于与公告收进页脚，不再占分组卡片。</p>
+      )}
+
+      <footer className="settings-footer">
+        <div className="settings-footer-brand">
+          <BrandMark size={20} />
+          <span>天枢 v{getRuntimeVersion() || APP_VERSION}</span>
+        </div>
+        <div className="settings-footer-links">
+          <button type="button" onClick={() => setSection('about')}>关于</button>
+          <button type="button" onClick={() => setSection('updates')}>更新公告</button>
+          <button type="button" onClick={onReplayTour}><Compass size={13} />上手指引</button>
+          <button type="button" onClick={() => setSection('about')}>许可</button>
+        </div>
+      </footer>
     </div>
   )
 }

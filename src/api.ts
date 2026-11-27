@@ -1,4 +1,4 @@
-import type { AgentMemoryInfo, AppSettings, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, HardwareProfile, ModelDirectorySaveResult, ModelDirectoryState, ModelDeleteResult, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
+import type { AgentMemoryClearResult, AgentMemoryInfo, AppSettings, AutostartState, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, GpuRuntimeActionResult, GpuRuntimeState, HardwareProfile, ModelDirectorySaveResult, ModelDirectoryState, ModelDeleteResult, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, StorageCleanupResult, StorageOverview, SessionBinding, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -79,12 +79,21 @@ export const api = {
   // agent 传了就只回那个形态的会话（4.0.0 阶段 0：左上角切形态 = 切 agent，列表跟着换作用域）
   sessions: (agent?: string) =>
     request<{ sessions: StoredSession[]; lastSessionId: string | null }>('/api/chat/sessions' + (agent ? `?agent=${encodeURIComponent(agent)}` : '')),
+  /** 只回会话 id / 标题 / 绑定模型，不带 turns；「我的模型」页数绑定用，避免拉全量历史。 */
+  sessionBindings: () =>
+    request<{ sessions: SessionBinding[]; lastSessionId: string | null; revision: number }>('/api/chat/sessions/bindings'),
   createSession: (title = '新会话', agent?: string) =>
     request<StoredSession>('/api/chat/sessions', { method: 'POST', body: JSON.stringify({ title, agent }) }),
   deleteSession: (id: string) => request<{ ok: boolean }>(`/api/chat/sessions/${id}`, { method: 'DELETE' }),
   chatModels: () => request<ChatModels>('/api/chat/models'),
   /** 模型运行态：后端、是否可达、此刻驻留的清单、正在启动或关闭的那一份。 */
   runtime: () => request<RuntimeState>('/api/runtime'),
+  /** 可选 GPU 扩展包：安装包内置或用户目录里的那份。 */
+  gpuRuntime: () => request<GpuRuntimeState>('/api/runtime/gpu'),
+  installGpuRuntime: () => request<GpuRuntimeActionResult>('/api/runtime/gpu/install', { method: 'POST' }),
+  removeGpuRuntime: () => request<GpuRuntimeActionResult>('/api/runtime/gpu/remove', { method: 'POST' }),
+  cancelGpuRuntime: () => request<GpuRuntimeState>('/api/runtime/gpu/cancel', { method: 'POST' }),
+  dismissGpuPrompt: () => request<{ ok: boolean; status: GpuRuntimeState }>('/api/runtime/gpu/prompt-dismiss', { method: 'POST' }),
   /**
    * 启动一份并常驻。allowMultiple 是「明知会同时驻两份也照做」的显式选项：
    * 不勾时后端会直接拒，不拿用户的显存去试。
@@ -100,6 +109,13 @@ export const api = {
     request<ModelDeleteResult>(`/api/models/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
   settings: () => request<AppSettings>('/api/settings'),
   saveSettings: (settings: AppSettings) => request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  resetSettings: () => request<AppSettings>('/api/settings/reset', { method: 'POST' }),
+  storage: () => request<StorageOverview>('/api/storage'),
+  revealStorage: (kind: 'data' | 'logs' | 'models' | 'updates') =>
+    request<{ ok: boolean }>('/api/storage/reveal', { method: 'POST', body: JSON.stringify({ kind }) }),
+  cleanupLogs: () => request<StorageCleanupResult>('/api/storage/cleanup-logs', { method: 'POST' }),
+  autostart: () => request<AutostartState>('/api/autostart'),
+  setAutostart: (enabled: boolean) => request<AutostartState>('/api/autostart', { method: 'PUT', body: JSON.stringify({ enabled }) }),
   edge0: () => request<Edge0State>('/api/edge0'),
   saveEdge0: (settings: Edge0Settings) => request<Edge0State>('/api/edge0', { method: 'PUT', body: JSON.stringify(settings) }),
   probeEdge0: () => request<Edge0Status>('/api/edge0/probe', { method: 'POST' }),
@@ -259,4 +275,5 @@ export const agentApi = {
   forgetSession: (key: string) => request<{ ok: boolean }>(`/api/agent/memory/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }),
   forgetNote: (scope: 'workspace' | 'global', text: string) =>
     request<{ ok: boolean }>(`/api/agent/memory/notes?scope=${scope}&text=${encodeURIComponent(text)}`, { method: 'DELETE' }),
+  clearMemory: () => request<AgentMemoryClearResult>('/api/agent/memory', { method: 'DELETE' }),
 }
