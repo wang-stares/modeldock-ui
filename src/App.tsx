@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { initApi, api, takeInstallResult } from './api'
 import { TitleBar } from './components/TitleBar'
 import { Rail } from './components/Rail'
-import { commitAsOneShot } from './components/viewTransition'
+import { commitAsOneShot, markMotionMode, setOneShotDirection } from './components/viewTransition'
 import { SplashScreen } from './components/SplashScreen'
 import type { LaunchPhase } from './components/SplashScreen'
 import { Onboarding } from './components/Onboarding'
@@ -112,9 +112,14 @@ export function App() {
     }
   }, [ready, settings.defaultAgentMode])
 
+  markMotionMode()
+
   // 只有用户主动换页才记「上次页面」；启动落点、后端回填与 ?page= 调试都不覆盖它。
   function goPage(next: PageKey) {
     if (next === page) return
+    const from = pageKeys.indexOf(page)
+    const to = pageKeys.indexOf(next)
+    setOneShotDirection(to > from ? 'down' : 'up')
     commitAsOneShot(() => setPage(next))
     try { localStorage.setItem('stardock.lastPage', next) } catch { /* 隐私模式忽略 */ }
   }

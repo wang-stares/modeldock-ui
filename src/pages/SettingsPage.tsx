@@ -15,7 +15,7 @@ import type {
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 import { FontLibrary } from '../components/FontLibrary'
-import { commitAsOneShot } from '../components/viewTransition'
+import { commitAsOneShot, setOneShotDirection } from '../components/viewTransition'
 import { ThemeIcon, StartupIcon, ChatIcon, FontIcon, ModelIcon, StorageIcon, AgentIcon, UpdateIcon, LogIcon, AboutIcon } from '../components/SettingsIcons'
 
 const accents = [
@@ -2334,7 +2334,10 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
   const [sourceState, setSourceState] = useState<ModelSourcesState | null>(null)
   const [query, setQuery] = useState('')
   /** 设置首页 ↔ 详情页也走同一次运镜，不在详情页里另起一套动画。 */
-  const goSection = (next: SettingsSection | null) => commitAsOneShot(() => setSection(next))
+  const goSection = (next: SettingsSection | null) => {
+    setOneShotDirection(next === null ? 'up' : 'down')
+    commitAsOneShot(() => setSection(next))
+  }
   const searchRef = useRef<HTMLInputElement>(null)
   const accentLabel = accents.find(accent => accent.value === settings.accent)?.name ?? '自定义强调色'
   const cpuLabel = cleanCpuName(hardware?.cpuName)
