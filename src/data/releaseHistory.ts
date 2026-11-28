@@ -21,6 +21,19 @@ export const releaseHistory: ReleaseHistoryGroup[] = [
     range: "2026-11-26 — 2026-11-29",
     items: [
       {
+        version: "4.4.0",
+        date: "2026-11-29",
+        title: "由 4.4.0（第2个测试版）转正，内容与该测试版一致；测试版记录保留在下方。",
+        sections: [
+          {
+            title: "变更",
+            items: [
+              { title: "", detail: "由 4.4.0（第2个测试版）转正，内容与该测试版一致；测试版记录保留在下方。" },
+            ],
+          },
+        ],
+      },
+      {
         version: "4.4.0-beta.2",
         date: "2026-11-29",
         title: "方向感",
@@ -3766,8 +3779,53 @@ export const releaseHistoryStable: ReleaseHistoryGroup[] = [
   {
     major: "4",
     label: "v4.x",
-    range: "2026-11-26 — 2026-11-28",
+    range: "2026-11-26 — 2026-11-29",
     items: [
+      {
+        version: "4.4.0",
+        date: "2026-11-29",
+        title: "换页不再切镜头",
+        sections: [
+          {
+            title: "新增",
+            items: [
+              { title: "换页不再切镜头", detail: "页面切换统一交给 commitAsOneShot（document.startViewTransition + flushSync），旧页收上去、新页抬进来，不再是「旧页消失、新页出现」两段独立画面。不支持 View Transitions、开了 prefers-reduced-motion、或上一次转场还没跑完时，直接更新，不加兜底动画。" },
+              { title: "侧栏高亮连续滑动", detail: "导航高亮改成一个独立的滑块，换页时从旧位置滑到新位置；从主导航滑到左下角「设置」也是同一块在动，不再是一闪一灭。" },
+              { title: "环境光跟着页面漂移", detail: "每个页面给一组光斑坐标，换页时光斑平移到新位置（.9s），背景与内容一起走，不会出现背景定格换内容的情况。" },
+              { title: "设置首页与详情同源运镜", detail: "点开任意设置行、返回首页、搜索命中、页脚入口都走同一次运镜，详情页从首页里「抬」起来，不是另起一页。" },
+            ],
+          },
+          {
+            title: "优化",
+            items: [
+              { title: "过渡节奏", detail: "总时长 .4s；旧页在 0–35% 收上去淡出（translateY(-12px)、模糊 4px），新页从 25% 起抬进来（18px → 0、blur 1.8px → 0）。页面底色是透明的，两张快照同时可见会「双影」，所以两段只在低不透明度区间擦肩，中途既没有鬼影也没有空场。" },
+              { title: "方向感", detail: "往后翻页（导航顺序往后）新页从下方 +30px 抬进来，往回翻则从上方 -30px 落下来；旧页沿反方向离场。goPage 用页面索引差算方向，设置首页↔详情按「进详情=下、返回=上」给。" },
+              { title: "旧页抬走而不是消失", detail: "旧画面 .32s 加速离场（反向 -26px、scale .984、模糊到 7px），不再和上一版那样慢慢淡成一片空白。" },
+              { title: "新页带过冲落位", detail: ".46s、scale .976 → 1、模糊 2.4px → 0，曲线 cubic-bezier(.16,1.02,.3,1)，收尾时轻轻压一下再停，位移有重量而不飘。" },
+              { title: "常驻元素继续动", detail: "侧栏高亮滑块换弹簧曲线（top .5s cubic-bezier(.34,1.28,.64,1)），环境光漂移 .62s，换页时侧栏与背景没停，只有页面内容在换。" },
+              { title: "不叠两层位移", detail: "启动时写 data-motion（vt / css）；有快照运镜时 .page 的入场动画让位，避免「快照在动、真页面也在动」。" },
+            ],
+          },
+          {
+            title: "说明",
+            items: [
+              { title: "", detail: "快照动画在 Chromium 里验证，Windows 安装版（WebView2）的真机手感仍待确认——这一版就是冲着真机手感去的。" },
+            ],
+          },
+          {
+            title: "修复",
+            items: [
+              { title: "", detail: "回退上一轮试过的「克隆旧画面」DOM 方案：克隆体与 React 树并存，时序不可控，已全部删除（.page-ghost / ghost-leave 不再存在），旧画面统一由 ::view-transition-old(page-frame) 承担。" },
+            ],
+          },
+          {
+            title: "变更",
+            items: [
+              { title: "", detail: "由 4.4.0（第2个测试版）转正，内容与该测试版一致；测试版记录保留在下方。" },
+            ],
+          },
+        ],
+      },
       {
         version: "4.3.1",
         date: "2026-11-28",
