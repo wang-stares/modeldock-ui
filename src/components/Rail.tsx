@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Boxes, Compass, Cpu, DownloadCloud, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings2 } from 'lucide-react'
 import type { PageKey } from '../types'
 import { APP_VERSION } from '../version'
@@ -22,12 +23,32 @@ export function Rail({ page, onNavigate, runningDownloads, backend, onTour, coll
   collapsed: boolean
   onToggle: () => void
 }) {
+  const railRef = useRef<HTMLElement | null>(null)
+  const [pill, setPill] = useState<{ top: number; height: number } | null>(null)
   const shownVersion = getRuntimeVersion() || APP_VERSION
   const versionMismatch = !!getRuntimeVersion() && getRuntimeVersion() !== APP_VERSION
   const SettingsIcon = settingsItem.icon
 
+  // 高亮块跟着当前页在侧栏里滑动，换页时不做淡出淡入——这是“一镜到底”的锚点。
+  useLayoutEffect(() => {
+    const host = railRef.current
+    if (!host) return
+    const measure = () => {
+      const active = host.querySelector<HTMLElement>('.nav-item.active')
+      if (!active) { setPill(null); return }
+      const hostRect = host.getBoundingClientRect()
+      const itemRect = active.getBoundingClientRect()
+      setPill({ top: itemRect.top - hostRect.top, height: itemRect.height })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [page, collapsed])
+
   return (
-    <aside className={`rail ${collapsed ? 'collapsed' : ''}`}>
+    <aside className={`rail ${collapsed ? 'collapsed' : ''}`} ref={railRef}>
+      {pill && <span className="rail-pill" aria-hidden style={{ top: pill.top, height: pill.height }} />}
       <div className="rail-head">
         {!collapsed && <div className="rail-label">工作台</div>}
         <button

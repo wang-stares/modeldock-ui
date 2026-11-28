@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { initApi, api, takeInstallResult } from './api'
 import { TitleBar } from './components/TitleBar'
 import { Rail } from './components/Rail'
+import { commitAsOneShot } from './components/viewTransition'
 import { SplashScreen } from './components/SplashScreen'
 import type { LaunchPhase } from './components/SplashScreen'
 import { Onboarding } from './components/Onboarding'
@@ -24,6 +25,15 @@ function loadSettings(): AppSettings {
 }
 
 const pageKeys: PageKey[] = ['library', 'models', 'chat', 'downloads', 'settings']
+
+/** 环境光随页面平移：换页时背景层缓慢挪位，制造“镜头在同一空间里移动”的错觉。 */
+const ambientDrift: Record<PageKey, { x: number; y: number }> = {
+  library: { x: 0, y: 0 },
+  models: { x: 28, y: -16 },
+  chat: { x: -24, y: 20 },
+  downloads: { x: 34, y: 14 },
+  settings: { x: -30, y: -20 },
+}
 function isPageKey(value: string | null): value is PageKey {
   return value !== null && pageKeys.includes(value as PageKey)
 }
@@ -104,7 +114,8 @@ export function App() {
 
   // 只有用户主动换页才记「上次页面」；启动落点、后端回填与 ?page= 调试都不覆盖它。
   function goPage(next: PageKey) {
-    setPage(next)
+    if (next === page) return
+    commitAsOneShot(() => setPage(next))
     try { localStorage.setItem('stardock.lastPage', next) } catch { /* 隐私模式忽略 */ }
   }
 
@@ -409,7 +420,13 @@ export function App() {
 
   return (
     <div className="app">
-      <div className="ambient" aria-hidden><i /><i /><i /></div>
+      <div
+        className="ambient"
+        aria-hidden
+        style={{ '--drift-x': `${ambientDrift[page].x}px`, '--drift-y': `${ambientDrift[page].y}px` } as CSSProperties}
+      >
+        <i /><i /><i />
+      </div>
       <TitleBar page={page} agent={agent} onAgent={setAgent} />
       {ready && (
         <div className={`workspace ${railCollapsed ? 'rail-collapsed' : ''}`}>

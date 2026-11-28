@@ -15,6 +15,7 @@ import type {
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 import { FontLibrary } from '../components/FontLibrary'
+import { commitAsOneShot } from '../components/viewTransition'
 import { ThemeIcon, StartupIcon, ChatIcon, FontIcon, ModelIcon, StorageIcon, AgentIcon, UpdateIcon, LogIcon, AboutIcon } from '../components/SettingsIcons'
 
 const accents = [
@@ -2332,6 +2333,8 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
   const [section, setSection] = useState<SettingsSection | null>(null)
   const [sourceState, setSourceState] = useState<ModelSourcesState | null>(null)
   const [query, setQuery] = useState('')
+  /** 设置首页 ↔ 详情页也走同一次运镜，不在详情页里另起一套动画。 */
+  const goSection = (next: SettingsSection | null) => commitAsOneShot(() => setSection(next))
   const searchRef = useRef<HTMLInputElement>(null)
   const accentLabel = accents.find(accent => accent.value === settings.accent)?.name ?? '自定义强调色'
   const cpuLabel = cleanCpuName(hardware?.cpuName)
@@ -2474,7 +2477,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
     return (
       <div className="page settings-detail">
         <div className="settings-shell">
-          <SectionHeader section={section} onBack={() => setSection(null)} />
+          <SectionHeader section={section} onBack={() => goSection(null)} />
           <div className="settings-detail-body">
             {section === 'appearance' && <AppearanceSettings settings={settings} onChange={onChange} />}
             {section === 'startup' && <StartupSettings settings={settings} onChange={onChange} />}
@@ -2536,7 +2539,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
               type="button"
               key={`${item.section}-${item.title}`}
               className="settings-search-hit"
-              onClick={() => { setSection(item.section); setQuery('') }}
+              onClick={() => commitAsOneShot(() => { setSection(item.section); setQuery('') })}
             >
               <span className="settings-search-hit-group">{item.group}</span>
               <span className="settings-search-hit-title">{item.title}</span>
@@ -2565,7 +2568,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
                       key={item.id}
                       className="settings-row"
                       aria-label={`打开${item.title}`}
-                      onClick={() => setSection(item.id)}
+                      onClick={() => goSection(item.id)}
                     >
                       <span className="settings-row-icon" aria-hidden><Icon size={18} /></span>
                       <span className="settings-row-copy">
@@ -2593,10 +2596,10 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
           <span>天枢 v{getRuntimeVersion() || APP_VERSION}</span>
         </div>
         <div className="settings-footer-links">
-          <button type="button" onClick={() => setSection('about')}>关于</button>
-          <button type="button" onClick={() => setSection('updates')}>更新公告</button>
+          <button type="button" onClick={() => goSection('about')}>关于</button>
+          <button type="button" onClick={() => goSection('updates')}>更新公告</button>
           <button type="button" onClick={onReplayTour}><Compass size={13} />上手指引</button>
-          <button type="button" onClick={() => setSection('about')}>许可</button>
+          <button type="button" onClick={() => goSection('about')}>许可</button>
         </div>
       </footer>
       </div>
