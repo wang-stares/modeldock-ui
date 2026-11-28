@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import {
-  AlertCircle, ArrowLeft, Bell, Check, ChevronDown, ChevronRight, Compass, Copy, Cpu, Download,
-  ExternalLink, FileText, FolderOpen, Gauge, Globe2, HardDrive, Keyboard, Layers, Megaphone,
-  Monitor, Moon, Palette, Power, RefreshCw, RotateCcw, Search, ShieldCheck, SlidersHorizontal,
-  Sun, Trash2, Type, Waves, X, MessageSquare,
+  AlertCircle, ArrowLeft, Bell, Check, ChevronDown, ChevronRight, Compass, Copy, Download,
+  ExternalLink, FileText, FolderOpen, Gauge, Keyboard, Layers, Megaphone,
+  Monitor, Moon, Palette, RefreshCw, RotateCcw, Search, SlidersHorizontal,
+  Sun, Trash2, Waves, X,
 } from 'lucide-react'
 import { api, agentApi, getRuntimeVersion } from '../api'
 import { releaseHistory, releaseHistoryStable, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
@@ -15,6 +15,7 @@ import type {
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
 import { FontLibrary } from '../components/FontLibrary'
+import { ThemeIcon, StartupIcon, ChatIcon, FontIcon, ModelIcon, StorageIcon, AgentIcon, UpdateIcon, LogIcon, AboutIcon } from '../components/SettingsIcons'
 
 const accents = [
   { name: 'Miuix 蓝', value: '#3482ff' },
@@ -24,7 +25,7 @@ const accents = [
   { name: '石墨', value: '#5b6472' },
 ]
 
-type SettingsGroupId = 'appearance' | 'startup' | 'inference' | 'storage' | 'agent' | 'chat' | 'fonts' | 'update' | 'diagnostics'
+type SettingsGroupId = 'appearance' | 'startup' | 'inference' | 'storage' | 'agent' | 'chat' | 'fonts' | 'update' | 'diagnostics' | 'about'
 type SettingsSection = SettingsGroupId | 'about' | 'updates'
 
 const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
@@ -2373,74 +2374,92 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
     id: SettingsGroupId
     title: string
     summary: string
-    icon: typeof Palette
-    topics: string[]
+    icon: (props: { size?: number }) => ReactElement
   }> = [
     {
       id: 'appearance',
       title: '外观与主题',
-      summary: `${themeLabel(settings.theme)} · ${materialLabel(settings.material)} · ${accentLabel}`,
-      icon: Palette,
-      topics: ['主题', '窗口材质', '强调色'],
+      summary: '主题 · 窗口材质 · 强调色',
+      icon: ThemeIcon,
     },
     {
       id: 'startup',
       title: '启动与窗口',
-      summary: `启动页${settings.startupSplash === 'quick' ? '快速' : '完整'} · ${settings.startupPage === 'library' ? '模型库' : settings.startupPage === 'chat' ? '对话' : '上次页面'}`,
-      icon: Power,
-      topics: ['启动页动画', '启动落点', settings.closeToTray ? '关闭收进托盘' : '关闭即退出', '登录自启'],
+      summary: '启动动画 · 启动落点 · 关闭收进托盘 · 登录自启',
+      icon: StartupIcon,
     },
     {
       id: 'inference',
       title: '模型与推理',
-      summary: `${inferenceSummary} · ${backendLabel(settings.backend)}`,
-      icon: Cpu,
-      topics: ['推理后端', '硬件与显存', '显卡加速', '高级参数', 'Edge0', sourceState ? `${sourceState.enabledCount} 个来源` : '模型来源'],
+      summary: inferenceSummary,
+      icon: ModelIcon,
     },
     {
       id: 'storage',
       title: '存储与数据',
-      summary: `模型目录与占用 · ${settings.downloadConcurrency} 路下载 · ${settings.downloadLimitKbps > 0 ? `${settings.downloadLimitKbps} KB/s 限速` : '不限速'}`,
-      icon: HardDrive,
-      topics: ['数据 / 模型目录', '清理缓存与日志', '下载并发与限速', settings.notifyDownloadComplete ? '完成通知开' : '完成通知关', '恢复默认'],
+      summary: '模型目录与占用 · 缓存清理 · 下载并发与限速',
+      icon: StorageIcon,
     },
     {
       id: 'agent',
       title: 'Agent 与联网',
-      summary: settings.agentNetwork ? '联网读取网页已开启 · 本机记忆' : '联网读取网页已关闭 · 本机记忆',
-      icon: ShieldCheck,
-      topics: ['联网读取', '会话记忆', '工作目录备忘', '清空记忆'],
+      summary: '联网读取 · 会话记忆 · 工作目录备忘 · 清空记忆',
+      icon: AgentIcon,
     },
     {
       id: 'chat',
       title: '对话与输入',
-      summary: `${settings.chatSendKey === 'ctrl-enter' ? 'Ctrl+Enter' : 'Enter'} 发送 · ${settings.chatFontSize === 'small' ? '小' : settings.chatFontSize === 'large' ? '大' : '标准'}字号`,
-      icon: MessageSquare,
-      topics: ['发送快捷键', '对话字号', settings.chatWrapLong ? '长行自动换行' : '长行横向滚动', '默认形态'],
+      summary: '发送快捷键 · 对话字号 · 长行自动换行',
+      icon: ChatIcon,
     },
     {
       id: 'fonts',
       title: '字体库',
-      summary: `${fontLabel(settings.chatFont)} · 对话阅读区 · 多语言 / 多风格`,
-      icon: Type,
-      topics: ['搜索字体', '按需下载', '预览子集', '上传字体', '各语言字体'],
+      summary: '对话阅读区 · 多语言 / 多风格 · 上传与预览',
+      icon: FontIcon,
     },
     {
       id: 'update',
       title: '更新与公告',
-      summary: settings.autoCheckUpdate ? `启动时自动检查 · v${APP_VERSION}` : '自动检查已关闭',
-      icon: RefreshCw,
-      topics: ['自动检查', '测试通道', '增量更新', '退出安装', '更新诊断', '公告'],
+      summary: '启动时自动检查 · 增量更新 · 测试通道',
+      icon: UpdateIcon,
     },
     {
       id: 'diagnostics',
       title: '日志与诊断',
-      summary: settings.diagnosticLogEnabled
-        ? `已开启 · ${settings.diagnosticLogMode === 'size' ? `总量 ${settings.diagnosticLogSizeMb} MB` : `保留 ${settings.diagnosticLogDays} 天`}`
-        : '默认关闭 · 打开后实时记录',
-      icon: FileText,
-      topics: ['启动 / 更新', '模型 / 对话', 'Agent / 工具', '按天 / 按总量', '预览与清空'],
+      summary: '记录启动 / 模型 / 对话 / Agent 工具 · 预览与清理',
+      icon: LogIcon,
     },
+    {
+      id: 'about',
+      title: '关于与许可',
+      summary: '版本、许可与开源边界 · 重播上手指引',
+      icon: AboutIcon,
+    },
+  ]
+
+  const groupBadge = (id: SettingsSection): string => {
+    switch (id) {
+      case 'appearance': return themeLabel(settings.theme)
+      case 'startup': return settings.startupSplash === 'quick' ? '快速启动' : '完整启动页'
+      case 'inference': return backendLabel(settings.backend)
+      case 'storage': return `${settings.downloadConcurrency} 路下载`
+      case 'agent': return settings.agentNetwork ? '联网已开启' : '联网已关闭'
+      case 'chat': return settings.chatSendKey === 'ctrl-enter' ? 'Ctrl+Enter 发送' : 'Enter 发送'
+      case 'fonts': return fontLabel(settings.chatFont)
+      case 'update': return `v${APP_VERSION}`
+      case 'diagnostics': return settings.diagnosticLogEnabled
+        ? `已开启 · ${settings.diagnosticLogMode === 'size' ? `${settings.diagnosticLogSizeMb} MB` : `${settings.diagnosticLogDays} 天`}`
+        : '默认关闭'
+      case 'about': return `v${getRuntimeVersion() || APP_VERSION}`
+      default: return ''
+    }
+  }
+
+  const sectionGroups: Array<{ id: string; label: string; hint: string; ids: SettingsSection[] }> = [
+    { id: 'everyday', label: '日常', hint: '外观、启动、输入与字体', ids: ['appearance', 'startup', 'chat', 'fonts'] },
+    { id: 'model-data', label: '模型与数据', hint: '推理、存储与联网', ids: ['inference', 'storage', 'agent'] },
+    { id: 'maintenance', label: '维护', hint: '更新、日志与关于', ids: ['update', 'diagnostics', 'about'] },
   ]
 
   const matches = useMemo(() => {
@@ -2488,7 +2507,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
         <div className="page-head-copy">
           <div className="eyebrow">Preferences</div>
           <h1 className="page-title">设置</h1>
-          <p className="page-sub">九组设置覆盖外观、启动、推理、存储、Agent、对话、字体、更新与日志诊断；字体库只改对话阅读区，不换界面字体。</p>
+          <p className="page-sub">九组设置按日常、模型与数据、维护三块排列；每行右侧只留一个当前状态，字体库只改对话阅读区，不换界面字体。</p>
         </div>
       </div>
 
@@ -2524,33 +2543,43 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
               <ChevronRight size={15} aria-hidden />
             </button>
           )) : (
-            <div className="settings-search-empty">没有匹配的设置项。换个词，或从下面九组入口进入。</div>
+            <div className="settings-search-empty">没有匹配的设置项。换个词，或从下面三块入口进入。</div>
           )}
         </div>
       ) : (
-        <div className="settings-group-grid" data-tour="settings-index">
-          {groups.map(item => {
-            const Icon = item.icon
-            return (
-              <button
-                type="button"
-                key={item.id}
-                className={`settings-group-card ${item.id === 'update' || item.id === 'diagnostics' ? 'settings-group-wide' : ''}`}
-                aria-label={`打开${item.title}`}
-                onClick={() => setSection(item.id)}
-              >
-                <span className="settings-menu-icon" aria-hidden><Icon size={19} /></span>
-                <span className="settings-group-copy">
-                  <span className="settings-menu-title">{item.title}</span>
-                  <span className="settings-menu-summary">{item.summary}</span>
-                  <span className="settings-group-topics">
-                    {item.topics.map(topic => <span className="settings-topic" key={topic}>{topic}</span>)}
-                  </span>
-                </span>
-                <ChevronRight className="settings-menu-chevron" size={18} aria-hidden />
-              </button>
-            )
-          })}
+        <div className="settings-sections" data-tour="settings-index">
+          {sectionGroups.map(group => (
+            <section className="settings-section" key={group.id}>
+              <div className="settings-section-head">
+                <span className="settings-section-label">{group.label}</span>
+                <span className="settings-section-hint">{group.hint}</span>
+              </div>
+              <div className="settings-section-card">
+                {group.ids.map(id => {
+                  const item = groups.find(entry => entry.id === id)
+                  if (!item) return null
+                  const Icon = item.icon
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      className="settings-row"
+                      aria-label={`打开${item.title}`}
+                      onClick={() => setSection(item.id)}
+                    >
+                      <span className="settings-row-icon" aria-hidden><Icon size={18} /></span>
+                      <span className="settings-row-copy">
+                        <span className="settings-row-title">{item.title}</span>
+                        <span className="settings-row-summary">{item.summary}</span>
+                      </span>
+                      {groupBadge(item.id) && <span className="settings-row-badge">{groupBadge(item.id)}</span>}
+                      <ChevronRight className="settings-row-chevron" size={16} aria-hidden />
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 

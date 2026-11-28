@@ -144,7 +144,7 @@ function buildSteps(context: TourContext): TourStep[] {
       minWidthForTarget: 1500,
       eyebrow: '第 4 步 · 设置',
       title: '按需调整设置',
-      copy: '此页不是上手的必经步骤。设置收成八组卡片，入口固定在导航底部，按 Ctrl+, 也能打开；主题、材质与强调色即时生效，启动与输入单独成组，字体库只改阅读区，关于与更新公告在页脚。',
+      copy: '此页不是上手的必经步骤。设置按日常、模型与数据、维护收成三块列表，入口固定在导航底部，按 Ctrl+, 也能打开；每行右侧只留一个当前状态，点进去才是具体选项，字体库只改阅读区，关于与更新公告另在页脚。',
       icon: Settings2,
       points: [
         { icon: Palette, title: '外观与主题', text: '浅色 / 深色 / 跟随系统；亚克力、云母、纯色三档材质；五档强调色即时生效。' },
