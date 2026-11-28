@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertCircle, ArrowLeft, Bell, Check, ChevronDown, ChevronRight, Compass, Cpu, Download,
+  AlertCircle, ArrowLeft, Bell, Check, ChevronDown, ChevronRight, Compass, Copy, Cpu, Download,
   ExternalLink, FileText, FolderOpen, Gauge, Globe2, HardDrive, Keyboard, Layers, Megaphone,
   Monitor, Moon, Palette, Power, RefreshCw, RotateCcw, Search, ShieldCheck, SlidersHorizontal,
-  Sun, Trash2, Waves, X,
+  Sun, Trash2, Type, Waves, X, MessageSquare,
 } from 'lucide-react'
 import { api, agentApi, getRuntimeVersion } from '../api'
 import { releaseHistory, releaseHistoryStable, type ReleaseHistoryItem, type ReleaseNoteSection } from '../data/releaseHistory'
 import { APP_VERSION } from '../version'
 import type {
-  AgentMemoryInfo, AppSettings, AutostartState, Edge0State, GpuRuntimeState, HardwareProfile,
+  AgentMemoryInfo, AppSettings, AutostartState, DiagnosticLogStatus, Edge0State, GpuRuntimeState, HardwareProfile,
   ModelDirectoryState, ModelSourcesState, StorageOverview, UpdateCheck, UpdateOutcome,
 } from '../types'
 import { formatBytes, formatReleaseDate, noteLines, useUpdateDownload } from '../components/UpdatePanel'
 import { BrandMark } from '../components/BrandMark'
+import { FontLibrary } from '../components/FontLibrary'
 
 const accents = [
   { name: 'Miuix 蓝', value: '#3482ff' },
@@ -23,14 +24,19 @@ const accents = [
   { name: '石墨', value: '#5b6472' },
 ]
 
-type SettingsGroupId = 'appearance' | 'inference' | 'storage' | 'agent' | 'update'
+type SettingsGroupId = 'appearance' | 'startup' | 'inference' | 'storage' | 'agent' | 'chat' | 'fonts' | 'update' | 'diagnostics'
 type SettingsSection = SettingsGroupId | 'about' | 'updates'
 
 const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; description: string }> = {
   appearance: {
-    eyebrow: 'Appearance & desktop',
-    title: '外观与交互',
-    description: '主题、窗口材质、强调色，以及关闭窗口和开机时的行为。切换外观立即生效，桌面行为按这里的开关执行。',
+    eyebrow: 'Appearance & theme',
+    title: '外观与主题',
+    description: '主题、窗口材质与强调色。切换外观立即生效，不再和窗口行为挤在同一张卡里。',
+  },
+  startup: {
+    eyebrow: 'Startup & window',
+    title: '启动与窗口',
+    description: '启动页动画、启动后落点、关闭窗口与登录自启。登录自启可以只在托盘里待命，不抢当前窗口。',
   },
   inference: {
     eyebrow: 'Models & inference',
@@ -47,10 +53,25 @@ const sectionMeta: Record<SettingsSection, { eyebrow: string; title: string; des
     title: 'Agent 与联网',
     description: '代理联网读取网页的授权，以及本机记忆的概览与清空。审计日志和项目经验不会被这里的按钮删掉。',
   },
+  chat: {
+    eyebrow: 'Chat & input',
+    title: '对话与输入',
+    description: '发送键、阅读字号、长行换行和默认 Agent 形态。字号只改对话阅读区，不影响设置页与导航。',
+  },
+  fonts: {
+    eyebrow: 'Font library',
+    title: '字体库',
+    description: '浏览、预览和按需下载多语言字体，或上传自己的字体。字体只作用于对话阅读区，界面继续使用系统字体。',
+  },
   update: {
     eyebrow: 'Updates & release notes',
     title: '更新与公告',
     description: '启动检查、自动下载、增量更新、测试通道、诊断与当前版本；更新公告在页脚单独展开。',
+  },
+  diagnostics: {
+    eyebrow: 'Logs & diagnostics',
+    title: '日志与诊断',
+    description: '按需开启本地诊断日志，实时记录启动、更新、模型、对话与异常；按天数或总量自动清理。日志只留在本机，不会上传。',
   },
   about: {
     eyebrow: 'About',
@@ -76,8 +97,23 @@ function backendLabel(value: AppSettings['backend']) {
   return value === 'auto' ? '自动探测' : value === 'ollama' ? 'Ollama' : value === 'edge0' ? 'Edge0' : '内置 llama.cpp'
 }
 
+function fontLabel(value: string) {
+  if (value === 'system') return '系统字体'
+  if (value === 'misans') return 'MiSans'
+  if (value.startsWith('catalog:')) return '字体库'
+  if (value.startsWith('custom:')) return '自定义字体'
+  return '系统字体'
+}
+
 function cleanCpuName(name?: string) {
   return name?.replace(/\(R\)|\(TM\)/g, '').replace(/\s+/g, ' ').trim() || '正在读取硬件'
+}
+
+/** Release 标题已带（YYMMDD）时不再追加发布日期，避免界面出现两个日期。 */
+function releaseNameLabel(name: string, version: string, publishedAt: string) {
+  const label = name || `v${version}`
+  const hasDateCode = /（\d{6}）/.test(label)
+  return `${label}${publishedAt && !hasDateCode ? ` · ${formatReleaseDate(publishedAt)} 发布` : ''}`
 }
 
 function Toggle({ checked, label, onChange, disabled = false }: {
@@ -119,7 +155,7 @@ function SectionHeader({ section, onBack }: { section: SettingsSection; onBack: 
   )
 }
 
-/* ── 外观与交互 ─────────────────────────────────────────────────────── */
+/* ── 外观与主题 ─────────────────────────────────────────────────────── */
 
 function AutostartSettings() {
   const [state, setState] = useState<AutostartState | null>(null)
@@ -137,10 +173,22 @@ function AutostartSettings() {
     setBusy(true)
     setNote('')
     try {
-      setState(await api.setAutostart(next))
+      setState(await api.setAutostart(next, state?.startMinimized === true))
       setNote(next ? '已写入当前用户的启动项，下次登录会启动天枢。' : '已移除当前用户的启动项。')
     } catch (e) {
       setNote(e instanceof Error ? e.message : '修改开机自启失败')
+    } finally { setBusy(false) }
+  }
+
+  async function toggleMinimized(next: boolean) {
+    if (!state?.enabled) return
+    setBusy(true)
+    setNote('')
+    try {
+      setState(await api.setAutostart(true, next))
+      setNote(next ? '下次登录会在托盘待命，不主动弹出主窗口。' : '下次登录会正常打开主窗口。')
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '修改登录启动行为失败')
     } finally { setBusy(false) }
   }
 
@@ -149,6 +197,10 @@ function AutostartSettings() {
 
   return (
     <section className="settings-card settings-detail-card">
+      <div className="settings-detail-lead">
+        <span className="chip">登录与启动</span>
+        <span>写当前用户的 Run 键，不请求管理员权限。</span>
+      </div>
       <div className="setting-row">
         <div className="setting-copy">
           <div className="setting-name">开机自启</div>
@@ -161,6 +213,20 @@ function AutostartSettings() {
           label="开机自启"
           disabled={busy || !state?.supported}
           onChange={next => void toggle(next)}
+        />
+      </div>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <div className="setting-name">登录后只在托盘待命</div>
+          <div className="setting-desc">
+            只影响登录自启：启动后不弹主窗口，左键托盘图标恢复。手动打开天枢不受影响。
+          </div>
+        </div>
+        <Toggle
+          checked={state?.startMinimized === true}
+          label="登录后只在托盘待命"
+          disabled={busy || !state?.supported || !state?.enabled}
+          onChange={next => void toggleMinimized(next)}
         />
       </div>
       <div className="setting-row">
@@ -237,6 +303,46 @@ function AppearanceSettings({ settings, onChange }: { settings: AppSettings; onC
           </button>
         </div>
       </section>
+    </>
+  )
+}
+
+/* ── 启动与窗口 ─────────────────────────────────────────────────────── */
+
+function StartupSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="settings-detail-lead">
+          <span className="chip">启动</span>
+          <span>只影响下一次打开天枢，不改系统启动项。</span>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">启动页动画</div>
+            <div className="setting-desc">
+              完整播放入场最快约 4.2 秒；快速模式直接落到最终帧，最短约 0.8 秒，仍等本机内核真正就绪后再进入工作台。
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="启动页动画">
+            <button type="button" className={settings.startupSplash === 'full' ? 'active' : ''} onClick={() => onChange({ startupSplash: 'full' })}>完整</button>
+            <button type="button" className={settings.startupSplash === 'quick' ? 'active' : ''} onClick={() => onChange({ startupSplash: 'quick' })}>快速</button>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">启动后打开</div>
+            <div className="setting-desc">
+              固定进模型库、直接进对话，或记住上次离开的页面。带 <code>?page=</code> 的调试链接仍优先。
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="启动后打开">
+            <button type="button" className={settings.startupPage === 'library' ? 'active' : ''} onClick={() => onChange({ startupPage: 'library' })}>模型库</button>
+            <button type="button" className={settings.startupPage === 'chat' ? 'active' : ''} onClick={() => onChange({ startupPage: 'chat' })}>对话</button>
+            <button type="button" className={settings.startupPage === 'last' ? 'active' : ''} onClick={() => onChange({ startupPage: 'last' })}>上次页面</button>
+          </div>
+        </div>
+      </section>
 
       <section className="settings-card settings-detail-card">
         <div className="settings-detail-lead">
@@ -259,6 +365,75 @@ function AppearanceSettings({ settings, onChange }: { settings: AppSettings; onC
       </section>
 
       <AutostartSettings />
+    </>
+  )
+}
+
+/* ── 对话与输入 ─────────────────────────────────────────────────────── */
+
+function ChatSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="settings-detail-lead">
+          <span className="chip">输入</span>
+          <span>发送键与字号立即生效；默认形态在下一次启动时决定左上角选中项。</span>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">发送快捷键</div>
+            <div className="setting-desc">
+              Enter 发送时 Shift+Enter 换行；Ctrl+Enter 发送时单独 Enter 只换行。两种方式都不会发送空消息。
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="发送快捷键">
+            <button type="button" className={settings.chatSendKey === 'enter' ? 'active' : ''} onClick={() => onChange({ chatSendKey: 'enter' })}>Enter</button>
+            <button type="button" className={settings.chatSendKey === 'ctrl-enter' ? 'active' : ''} onClick={() => onChange({ chatSendKey: 'ctrl-enter' })}>Ctrl+Enter</button>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">对话字号</div>
+            <div className="setting-desc">只改消息正文与输入框，不改设置页、导航与卡片字号。</div>
+          </div>
+          <div className="segmented" role="group" aria-label="对话字号">
+            <button type="button" className={settings.chatFontSize === 'small' ? 'active' : ''} onClick={() => onChange({ chatFontSize: 'small' })}>小</button>
+            <button type="button" className={settings.chatFontSize === 'standard' ? 'active' : ''} onClick={() => onChange({ chatFontSize: 'standard' })}>标准</button>
+            <button type="button" className={settings.chatFontSize === 'large' ? 'active' : ''} onClick={() => onChange({ chatFontSize: 'large' })}>大</button>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">长行自动换行</div>
+            <div className="setting-desc">关闭后，代码与日志这类没有空格的超长行会横向滚动，不把气泡撑高；普通中文仍按段落换行。</div>
+          </div>
+          <Toggle
+            checked={settings.chatWrapLong}
+            label="长行自动换行"
+            onChange={next => onChange({ chatWrapLong: next })}
+          />
+        </div>
+      </section>
+
+      <section className="settings-card settings-detail-card">
+        <div className="settings-detail-lead">
+          <span className="chip">默认形态</span>
+          <span>标题栏左上角的当前选择仍以本次会话为准。</span>
+        </div>
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">启动时默认 Agent</div>
+            <div className="setting-desc">
+              沿用上次选择，或每次启动固定为办公 / 编程。办公只读写工作区，不执行命令；编程仍要逐次确认命令。
+            </div>
+          </div>
+          <div className="segmented" role="group" aria-label="启动时默认 Agent">
+            <button type="button" className={settings.defaultAgentMode === 'last' ? 'active' : ''} onClick={() => onChange({ defaultAgentMode: 'last' })}>上次</button>
+            <button type="button" className={settings.defaultAgentMode === 'office' ? 'active' : ''} onClick={() => onChange({ defaultAgentMode: 'office' })}>办公</button>
+            <button type="button" className={settings.defaultAgentMode === 'code' ? 'active' : ''} onClick={() => onChange({ defaultAgentMode: 'code' })}>编程</button>
+          </div>
+        </div>
+      </section>
     </>
   )
 }
@@ -1105,6 +1280,249 @@ function StorageSettings({ settings, onChange, onReset }: {
   )
 }
 
+/* ── 日志与诊断 ───────────────────────────────────────────────────── */
+
+function DiagnosticSettings({ settings, onChange }: {
+  settings: AppSettings
+  onChange: (patch: Partial<AppSettings>) => void
+}) {
+  const [status, setStatus] = useState<DiagnosticLogStatus | null>(null)
+  const [tail, setTail] = useState('')
+  const [days, setDays] = useState(String(settings.diagnosticLogDays))
+  const [size, setSize] = useState(String(settings.diagnosticLogSizeMb))
+  const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+
+  useEffect(() => { setDays(String(settings.diagnosticLogDays)) }, [settings.diagnosticLogDays])
+  useEffect(() => { setSize(String(settings.diagnosticLogSizeMb)) }, [settings.diagnosticLogSizeMb])
+
+  useEffect(() => {
+    let alive = true
+    const load = () => {
+      void api.diagnostics().then(next => {
+        if (alive) setStatus(next)
+      }).catch(() => { /* 状态读不到不影响开关本身 */ })
+    }
+    load()
+    const timer = window.setInterval(load, 8000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [settings.diagnosticLogEnabled, settings.diagnosticLogMode, settings.diagnosticLogDays, settings.diagnosticLogSizeMb])
+
+  useEffect(() => {
+    let alive = true
+    void api.diagnosticsTail(200).then(result => {
+      if (!alive) return
+      setTail(result.text)
+      setStatus(result.status)
+    }).catch(() => { /* 预览失败时留空，用户可手动刷新 */ })
+    return () => { alive = false }
+  }, [])
+
+  async function refreshPreview() {
+    setBusy('preview')
+    setNote('')
+    try {
+      const result = await api.diagnosticsTail(200)
+      setTail(result.text)
+      setStatus(result.status)
+      setNote(result.text.trim() ? '' : '还没有日志写入。打开上面的开关，再发一条消息或重启一次应用。')
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '读取日志失败')
+    } finally { setBusy('') }
+  }
+
+  async function cleanup() {
+    if (!window.confirm('清空诊断日志？会删除 logs/app 与 logs/chat 下的文件，不影响更新日志、模型和会话。')) return
+    setBusy('clear')
+    setNote('')
+    try {
+      const result = await api.cleanupDiagnostics()
+      setTail('')
+      setNote(result.failed.length > 0
+        ? `已删除 ${result.removed} 个日志、释放 ${formatBytes(result.freedBytes)}；${result.failed.join('；')}`
+        : `已删除 ${result.removed} 个诊断日志，释放 ${formatBytes(result.freedBytes)}。`)
+      setStatus(await api.diagnostics().catch(() => status))
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : '清空诊断日志失败')
+    } finally { setBusy('') }
+  }
+
+  async function reveal() {
+    setNote('')
+    try { await api.revealStorage('logs') }
+    catch (e) { setNote(e instanceof Error ? e.message : '打不开日志目录') }
+  }
+
+  async function copy() {
+    if (!tail.trim()) { setNote('当前没有可复制的日志。'); return }
+    try {
+      await navigator.clipboard.writeText(tail)
+      setNote('已复制最近 200 行日志。')
+    } catch {
+      setNote('复制失败；可以打开日志目录直接取文件。')
+    }
+  }
+
+  function applyDays() {
+    const value = Number(days)
+    onChange({ diagnosticLogDays: Number.isFinite(value) ? Math.max(1, Math.min(365, Math.trunc(value))) : 7 })
+  }
+
+  function applySize() {
+    const value = Number(size)
+    onChange({ diagnosticLogSizeMb: Number.isFinite(value) ? Math.max(5, Math.min(2000, Math.trunc(value))) : 100 })
+  }
+
+  const appLine = status?.currentAppFile ? status.currentAppFile.split(/[\\/]/).pop() : ''
+  const chatLine = status?.currentChatFile ? status.currentChatFile.split(/[\\/]/).pop() : ''
+  const previewLines = tail.split(/\r?\n/).filter(Boolean).slice(-200)
+
+  return (
+    <>
+      <section className="settings-card settings-detail-card">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">本地诊断日志</div>
+            <div className="setting-desc">
+              打开后实时记录启动、更新、模型加载、对话、Agent 工具调用与异常。日志只写本机，不上传；
+              对话正文可能包含你的提问与回复，请按需开启。
+            </div>
+          </div>
+          <Toggle
+            checked={settings.diagnosticLogEnabled}
+            label="本地诊断日志"
+            onChange={next => onChange({ diagnosticLogEnabled: next })}
+          />
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">保留方式</div>
+            <div className="setting-desc">超过阈值后从最旧的文件开始删除；正在写入的应用日志与当前会话日志不会被删。</div>
+          </div>
+          <div className="segmented" role="group" aria-label="日志保留方式">
+            <button type="button" className={settings.diagnosticLogMode === 'days' ? 'active' : ''} onClick={() => onChange({ diagnosticLogMode: 'days' })}>按天数</button>
+            <button type="button" className={settings.diagnosticLogMode === 'size' ? 'active' : ''} onClick={() => onChange({ diagnosticLogMode: 'size' })}>按总量</button>
+          </div>
+        </div>
+
+        {settings.diagnosticLogMode === 'days' ? (
+          <div className="setting-row">
+            <div className="setting-copy">
+              <div className="setting-name">保留天数</div>
+              <div className="setting-desc">1–365 天。按文件最后写入时间计算，过期文件会在下一次检查时删除。</div>
+            </div>
+            <div className="settings-number-group">
+              <input
+                className="settings-input settings-number"
+                type="number"
+                min={1}
+                max={365}
+                value={days}
+                aria-label="日志保留天数"
+                onChange={e => setDays(e.target.value)}
+                onBlur={applyDays}
+              />
+              <span className="settings-unit">天</span>
+            </div>
+          </div>
+        ) : (
+          <div className="setting-row">
+            <div className="setting-copy">
+              <div className="setting-name">总大小上限</div>
+              <div className="setting-desc">5–2000 MB。应用日志与对话日志共用这一份预算，从最旧文件开始删。</div>
+            </div>
+            <div className="settings-number-group">
+              <input
+                className="settings-input settings-number"
+                type="number"
+                min={5}
+                max={2000}
+                value={size}
+                aria-label="日志总大小上限"
+                onChange={e => setSize(e.target.value)}
+                onBlur={applySize}
+              />
+              <span className="settings-unit">MB</span>
+            </div>
+          </div>
+        )}
+
+        {status && (
+          <>
+            <div className="settings-stat-grid">
+              <div className="settings-stat"><span>诊断日志占用</span><strong>{formatBytes(status.totalBytes)}</strong></div>
+              <div className="settings-stat"><span>系统流</span><strong>{status.appFiles} 个 · {formatBytes(status.appBytes)}</strong></div>
+              <div className="settings-stat"><span>对话流</span><strong>{status.chatFiles} 个 · {formatBytes(status.chatBytes)}</strong></div>
+              <div className="settings-stat"><span>最近写入</span><strong>{status.lastWriteAt ? new Date(status.lastWriteAt).toLocaleString() : '—'}</strong></div>
+            </div>
+            {(appLine || chatLine) && (
+              <div className="settings-callout">
+                当前写入：{appLine || '无应用日志'}{chatLine ? ` · ${chatLine}` : ''}
+                {status.lastError ? ` · ${status.lastError}` : ''}
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">日志目录</div>
+            <div className="setting-desc">系统事件写 <code>logs/app</code>，对话与工具调用写 <code>logs/chat</code>；按会话分文件，便于定位。</div>
+          </div>
+          <div className="settings-row-end">
+            <code className="settings-path">{status?.directory || '%APPDATA%\\ModelDock\\logs'}</code>
+            <button type="button" className="btn ghost sm" onClick={() => void reveal()}><FolderOpen />打开</button>
+          </div>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name">最近 200 行</div>
+            <div className="setting-desc">把 app 与 chat 两路日志按文件时间拼在一起预览；不会把完整对话推给界面之外。</div>
+          </div>
+          <div className="settings-row-end">
+            <button type="button" className="btn ghost sm" disabled={busy === 'preview'} onClick={() => void refreshPreview()}>
+              <RefreshCw />{busy === 'preview' ? '刷新中…' : '刷新'}
+            </button>
+            <button type="button" className="btn ghost sm" onClick={() => void copy()}><Copy />复制</button>
+            <button type="button" className="btn ghost sm settings-danger" disabled={busy === 'clear'} onClick={() => void cleanup()}>
+              <Trash2 />{busy === 'clear' ? '清理中…' : '清空'}
+            </button>
+          </div>
+        </div>
+
+        <pre className="settings-log-view" aria-label="最近诊断日志">
+          {previewLines.length > 0 ? previewLines.map((line, index) => (
+            <span key={index} className="settings-log-line">{prettyLogLine(line)}</span>
+          )) : <span className="settings-log-empty">{settings.diagnosticLogEnabled ? '暂无日志写入，发一条消息或重启应用后会出现。' : '诊断日志当前关闭。打开开关后，新的启动、更新、模型与对话事件才会落盘。'}</span>}
+        </pre>
+
+        {note && <div className="settings-note" style={{ paddingLeft: 0 }}>{note}</div>}
+        <div className="settings-callout">
+          默认关闭；开启后按当前阈值自动清理。日志用于排障，不参与云同步，也不会随会话记忆一起清空。
+        </div>
+      </section>
+    </>
+  )
+}
+
+function prettyLogLine(line: string): string {
+  try {
+    const row = JSON.parse(line) as { ts?: string; level?: string; cat?: string; msg?: string; process?: string; data?: unknown }
+    const time = row.ts ? new Date(row.ts).toLocaleTimeString() : ''
+    const level = (row.level || 'info').toUpperCase().padEnd(5)
+    const process = row.process === 'chat' ? '对话' : '应用'
+    const data = row.data ? ` · ${JSON.stringify(row.data).slice(0, 260)}` : ''
+    return `${time} ${level} [${process}/${row.cat || '-'}] ${row.msg || ''}${data}`
+  } catch {
+    return line
+  }
+}
+
 /* ── Agent 与联网 ───────────────────────────────────────────────────── */
 
 function AgentSettings({ settings, onChange }: {
@@ -1194,9 +1612,10 @@ function formatClock(value: string) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-function VersionUpdateSettings({ settings, onChange }: {
+function VersionUpdateSettings({ settings, onChange, onOpenReleaseNotes }: {
   settings: AppSettings
   onChange: (patch: Partial<AppSettings>) => void
+  onOpenReleaseNotes: () => void
 }) {
   const [check, setCheck] = useState<UpdateCheck | null>(null)
   const [checking, setChecking] = useState(false)
@@ -1303,6 +1722,29 @@ function VersionUpdateSettings({ settings, onChange }: {
       .catch(() => { window.open(url, '_blank', 'noreferrer') })
   }
 
+  function openDownloadUrl() {
+    const url = check?.asset?.url || check?.releaseUrl || ''
+    if (!url) {
+      showNotice('没有可打开的下载地址，请稍后再检查。', 'error')
+      return
+    }
+    openExternal(url)
+  }
+
+  async function copyDownloadUrl() {
+    const url = check?.asset?.url
+    if (!url) {
+      showNotice('没有可复制的安装包直链，请用「在 GitHub 查看」。', 'error')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      showNotice('下载直链已复制到剪贴板。')
+    } catch {
+      showNotice('复制失败，请用「用浏览器下载」。', 'error')
+    }
+  }
+
   async function copyDiagnostics() {
     setError('')
     setNotice('')
@@ -1403,6 +1845,16 @@ function VersionUpdateSettings({ settings, onChange }: {
           </button>
         </div>
 
+        <div className="setting-row">
+          <div className="setting-copy">
+            <div className="setting-name"><Megaphone aria-hidden size={14} /> 版本更新公告</div>
+            <div className="setting-desc">查看本版修复说明与历史版本记录。公告随安装包离线保存，不依赖联网加载。</div>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onOpenReleaseNotes}>
+            查看公告<ChevronRight aria-hidden size={14} />
+          </button>
+        </div>
+
         {skippedVersion && (
           <div className="setting-row">
             <div className="setting-copy">
@@ -1483,7 +1935,7 @@ function VersionUpdateSettings({ settings, onChange }: {
                   : `发现新版本 v${check.latestVersion}${check.latestVersion.includes('-') ? ' · 测试版' : ''}`}
               </div>
               <div className="setting-desc">
-                {check.releaseName || `v${check.latestVersion}`}{check.publishedAt ? ` · ${formatReleaseDate(check.publishedAt)} 发布` : ''}
+                {releaseNameLabel(check.releaseName, check.latestVersion, check.publishedAt)}
               </div>
             </div>
             <span className="chip accent">可更新</span>
@@ -1538,6 +1990,16 @@ function VersionUpdateSettings({ settings, onChange }: {
                   <button type="button" className="btn primary sm" disabled={busy || downloading || !check.asset} onClick={() => void start()}>
                     <Download aria-hidden />{downloading ? '下载中…' : download?.state === 'failed' ? '重新下载' : '开始下载'}
                   </button>
+                  {download?.state === 'failed' && (
+                    <>
+                      <button type="button" className="btn ghost sm" onClick={openDownloadUrl}>
+                        <ExternalLink aria-hidden />用浏览器下载
+                      </button>
+                      <button type="button" className="btn ghost sm" onClick={() => void copyDownloadUrl()}>
+                        <Copy aria-hidden />复制直链
+                      </button>
+                    </>
+                  )}
                   {downloading && (
                     <button type="button" className="btn ghost sm" onClick={() => void pause()}>暂停</button>
                   )}
@@ -1818,11 +2280,13 @@ function UpdateSettings({ channel }: { channel: 'stable' | 'beta' }) {
 type SearchEntry = { section: SettingsSection; group: string; title: string; keywords: string }
 
 const searchIndex: SearchEntry[] = [
-  { section: 'appearance', group: '外观与交互', title: '主题与深浅色', keywords: '主题 浅色 深色 跟随系统 外观' },
-  { section: 'appearance', group: '外观与交互', title: '窗口材质', keywords: '材质 亚克力 云母 纯色 透明 壁纸' },
-  { section: 'appearance', group: '外观与交互', title: '强调色', keywords: '强调色 颜色 配色 蓝' },
-  { section: 'appearance', group: '外观与交互', title: '关闭窗口时收进托盘', keywords: '托盘 关闭 退出 最小化 后台' },
-  { section: 'appearance', group: '外观与交互', title: '开机自启', keywords: '开机 自启 启动 登录 注册表 Run' },
+  { section: 'appearance', group: '外观与主题', title: '主题与深浅色', keywords: '主题 浅色 深色 跟随系统 外观' },
+  { section: 'appearance', group: '外观与主题', title: '窗口材质', keywords: '材质 亚克力 云母 纯色 透明 壁纸' },
+  { section: 'appearance', group: '外观与主题', title: '强调色', keywords: '强调色 颜色 配色 蓝' },
+  { section: 'startup', group: '启动与窗口', title: '启动页动画', keywords: '启动页 动画 快速 完整 跳过' },
+  { section: 'startup', group: '启动与窗口', title: '启动后打开', keywords: '启动 页面 模型库 对话 上次页面' },
+  { section: 'startup', group: '启动与窗口', title: '关闭窗口时收进托盘', keywords: '托盘 关闭 退出 最小化 后台' },
+  { section: 'startup', group: '启动与窗口', title: '开机自启与登录最小化', keywords: '开机 自启 启动 登录 注册表 Run 托盘' },
   { section: 'inference', group: '模型与推理', title: '推理后端', keywords: '后端 ollama edge0 内置 llama 自动' },
   { section: 'inference', group: '模型与推理', title: '硬件与显存', keywords: '处理器 cpu 内存 显卡 显存 预算 硬件' },
   { section: 'inference', group: '模型与推理', title: '显卡加速组件', keywords: 'gpu vulkan 加速 组件 安装 卸载' },
@@ -1837,20 +2301,32 @@ const searchIndex: SearchEntry[] = [
   { section: 'storage', group: '存储与数据', title: '恢复默认设置', keywords: '恢复 默认 重置 reset' },
   { section: 'agent', group: 'Agent 与联网', title: '代理联网读取网页', keywords: '联网 网页 web_fetch 代理 搜索 子体' },
   { section: 'agent', group: 'Agent 与联网', title: '本机记忆与清空', keywords: '记忆 备忘 会话 清空 memory' },
+  { section: 'chat', group: '对话与输入', title: '发送快捷键', keywords: '发送 Enter Ctrl 回车 快捷键 换行' },
+  { section: 'chat', group: '对话与输入', title: '对话字号', keywords: '字号 字体 大小 阅读 对话' },
+  { section: 'chat', group: '对话与输入', title: '长行自动换行', keywords: '换行 代码 日志 横向滚动 长行' },
+  { section: 'chat', group: '对话与输入', title: '默认 Agent 形态', keywords: '默认 形态 办公 编程 agent' },
+  { section: 'fonts', group: '字体库', title: '对话阅读字体', keywords: '字体 字体库 阅读 系统字体 MiSans 宋体 黑体' },
+  { section: 'fonts', group: '字体库', title: '搜索与下载字体', keywords: '字体 搜索 下载 预览 多语言 简体中文 日文 韩文 阿拉伯文' },
+  { section: 'fonts', group: '字体库', title: '上传自己的字体', keywords: '上传 字体 ttf otf woff 自定义' },
   { section: 'update', group: '更新与公告', title: '自动检查与自动下载', keywords: '更新 检查 自动下载 升级' },
   { section: 'update', group: '更新与公告', title: '测试版通道', keywords: '测试版 beta 正式版 通道 灰度' },
   { section: 'update', group: '更新与公告', title: '增量更新与退出安装', keywords: '增量 delta 退出 安装 重启' },
   { section: 'update', group: '更新与公告', title: '更新诊断', keywords: '诊断 日志 复制 更新失败' },
+  { section: 'diagnostics', group: '日志与诊断', title: '开启本地诊断日志', keywords: '日志 诊断 log 开启 关闭 实时 留存' },
+  { section: 'diagnostics', group: '日志与诊断', title: '按天数或按总量保留', keywords: '日志 保留 天数 总大小 清理 自动删除' },
+  { section: 'diagnostics', group: '日志与诊断', title: '日志占用与预览', keywords: '日志 占用 大小 文件 预览 最近 复制 清空' },
   { section: 'about', group: '关于', title: '关于天枢', keywords: '关于 版本 框架 许可 上手指引' },
-  { section: 'updates', group: '公告', title: '更新公告', keywords: '公告 release notes 历史 版本说明' },
+  { section: 'updates', group: '更新与公告', title: '版本更新公告', keywords: '版本 更新 公告 release notes 历史 本版 修复说明 更新说明' },
 ]
 
-export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTour }: {
+export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTour, jumpTo, onJumpHandled }: {
   settings: AppSettings
   onChange: (patch: Partial<AppSettings>) => void
   onReset: (next: AppSettings) => void
   hardware: HardwareProfile | null
   onReplayTour: () => void
+  jumpTo?: { section: 'update' | 'updates'; id: number } | null
+  onJumpHandled?: () => void
 }) {
   const [section, setSection] = useState<SettingsSection | null>(null)
   const [sourceState, setSourceState] = useState<ModelSourcesState | null>(null)
@@ -1861,6 +2337,12 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
   const inferenceSummary = hardware
     ? `${cpuLabel} · ${hardware.ramGb.toFixed(0)} GB · ${hardware.hasGpu ? hardware.gpuName : 'CPU 推理'}`
     : '正在读取设备信息'
+
+  useEffect(() => {
+    if (!jumpTo) return
+    setSection(jumpTo.section)
+    onJumpHandled?.()
+  }, [jumpTo?.id])
 
   useEffect(() => {
     let alive = true
@@ -1896,10 +2378,17 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
   }> = [
     {
       id: 'appearance',
-      title: '外观与交互',
+      title: '外观与主题',
       summary: `${themeLabel(settings.theme)} · ${materialLabel(settings.material)} · ${accentLabel}`,
       icon: Palette,
-      topics: ['主题与材质', '强调色', settings.closeToTray ? '关闭收进托盘' : '关闭即退出', '开机自启'],
+      topics: ['主题', '窗口材质', '强调色'],
+    },
+    {
+      id: 'startup',
+      title: '启动与窗口',
+      summary: `启动页${settings.startupSplash === 'quick' ? '快速' : '完整'} · ${settings.startupPage === 'library' ? '模型库' : settings.startupPage === 'chat' ? '对话' : '上次页面'}`,
+      icon: Power,
+      topics: ['启动页动画', '启动落点', settings.closeToTray ? '关闭收进托盘' : '关闭即退出', '登录自启'],
     },
     {
       id: 'inference',
@@ -1923,11 +2412,34 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
       topics: ['联网读取', '会话记忆', '工作目录备忘', '清空记忆'],
     },
     {
+      id: 'chat',
+      title: '对话与输入',
+      summary: `${settings.chatSendKey === 'ctrl-enter' ? 'Ctrl+Enter' : 'Enter'} 发送 · ${settings.chatFontSize === 'small' ? '小' : settings.chatFontSize === 'large' ? '大' : '标准'}字号`,
+      icon: MessageSquare,
+      topics: ['发送快捷键', '对话字号', settings.chatWrapLong ? '长行自动换行' : '长行横向滚动', '默认形态'],
+    },
+    {
+      id: 'fonts',
+      title: '字体库',
+      summary: `${fontLabel(settings.chatFont)} · 对话阅读区 · 多语言 / 多风格`,
+      icon: Type,
+      topics: ['搜索字体', '按需下载', '预览子集', '上传字体', '各语言字体'],
+    },
+    {
       id: 'update',
       title: '更新与公告',
       summary: settings.autoCheckUpdate ? `启动时自动检查 · v${APP_VERSION}` : '自动检查已关闭',
       icon: RefreshCw,
       topics: ['自动检查', '测试通道', '增量更新', '退出安装', '更新诊断', '公告'],
+    },
+    {
+      id: 'diagnostics',
+      title: '日志与诊断',
+      summary: settings.diagnosticLogEnabled
+        ? `已开启 · ${settings.diagnosticLogMode === 'size' ? `总量 ${settings.diagnosticLogSizeMb} MB` : `保留 ${settings.diagnosticLogDays} 天`}`
+        : '默认关闭 · 打开后实时记录',
+      icon: FileText,
+      topics: ['启动 / 更新', '模型 / 对话', 'Agent / 工具', '按天 / 按总量', '预览与清空'],
     },
   ]
 
@@ -1942,34 +2454,41 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
   if (section) {
     return (
       <div className="page settings-detail">
-        <SectionHeader section={section} onBack={() => setSection(null)} />
-        <div className="settings-detail-body">
-          {section === 'appearance' && <AppearanceSettings settings={settings} onChange={onChange} />}
-          {section === 'inference' && (
-            <InferenceSettings
-              hardware={hardware}
-              settings={settings}
-              onChange={onChange}
-              onSourcesChange={setSourceState}
-            />
-          )}
-          {section === 'storage' && <StorageSettings settings={settings} onChange={onChange} onReset={onReset} />}
-          {section === 'agent' && <AgentSettings settings={settings} onChange={onChange} />}
-          {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} />}
-          {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
-          {section === 'updates' && <UpdateSettings channel={settings.updateChannel} />}
+        <div className="settings-shell">
+          <SectionHeader section={section} onBack={() => setSection(null)} />
+          <div className="settings-detail-body">
+            {section === 'appearance' && <AppearanceSettings settings={settings} onChange={onChange} />}
+            {section === 'startup' && <StartupSettings settings={settings} onChange={onChange} />}
+            {section === 'inference' && (
+              <InferenceSettings
+                hardware={hardware}
+                settings={settings}
+                onChange={onChange}
+                onSourcesChange={setSourceState}
+              />
+            )}
+            {section === 'storage' && <StorageSettings settings={settings} onChange={onChange} onReset={onReset} />}
+            {section === 'agent' && <AgentSettings settings={settings} onChange={onChange} />}
+            {section === 'chat' && <ChatSettings settings={settings} onChange={onChange} />}
+            {section === 'fonts' && <FontLibrary value={settings.chatFont} onChange={onChange} />}
+            {section === 'update' && <VersionUpdateSettings settings={settings} onChange={onChange} onOpenReleaseNotes={() => setSection('updates')} />}
+            {section === 'diagnostics' && <DiagnosticSettings settings={settings} onChange={onChange} />}
+            {section === 'about' && <AboutSettings onReplayTour={onReplayTour} />}
+            {section === 'updates' && <UpdateSettings channel={settings.updateChannel} />}
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="page">
+    <div className="page settings-home">
+      <div className="settings-shell">
       <div className="page-head settings-home-head">
         <div className="page-head-copy">
           <div className="eyebrow">Preferences</div>
           <h1 className="page-title">设置</h1>
-          <p className="page-sub">五组设置覆盖外观、推理、存储、Agent 与更新；可合并的入口已经收进同一组，低频项不再单独占一页。</p>
+          <p className="page-sub">九组设置覆盖外观、启动、推理、存储、Agent、对话、字体、更新与日志诊断；字体库只改对话阅读区，不换界面字体。</p>
         </div>
       </div>
 
@@ -2005,7 +2524,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
               <ChevronRight size={15} aria-hidden />
             </button>
           )) : (
-            <div className="settings-search-empty">没有匹配的设置项。换个词，或从下面五组入口进入。</div>
+            <div className="settings-search-empty">没有匹配的设置项。换个词，或从下面九组入口进入。</div>
           )}
         </div>
       ) : (
@@ -2016,7 +2535,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
               <button
                 type="button"
                 key={item.id}
-                className="settings-group-card"
+                className={`settings-group-card ${item.id === 'update' || item.id === 'diagnostics' ? 'settings-group-wide' : ''}`}
                 aria-label={`打开${item.title}`}
                 onClick={() => setSection(item.id)}
               >
@@ -2036,7 +2555,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
       )}
 
       {!query.trim() && (
-        <p className="settings-index-note">偏好设置保存在 %APPDATA%\ModelDock；设置入口固定在导航底部，按 Ctrl+, 可随时打开。关于与公告收进页脚，不再占分组卡片。</p>
+        <p className="settings-index-note">偏好设置保存在 %APPDATA%\ModelDock；设置入口固定在导航底部，按 Ctrl+, 可随时打开。字体文件另存在 fonts 目录，删除后可回到系统字体。</p>
       )}
 
       <footer className="settings-footer">
@@ -2051,6 +2570,7 @@ export function SettingsPage({ settings, onChange, onReset, hardware, onReplayTo
           <button type="button" onClick={() => setSection('about')}>许可</button>
         </div>
       </footer>
+      </div>
     </div>
   )
 }

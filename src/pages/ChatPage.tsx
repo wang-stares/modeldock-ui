@@ -60,10 +60,13 @@ function memoryTime(iso: string) {
   return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-export function ChatPage({ toast, agent, onOpenLibrary, onOpenModels }: {
+export function ChatPage({ toast, agent, sendKey, chatFontSize, chatWrapLong, onOpenLibrary, onOpenModels }: {
   toast: (message: string) => void
   // 当前 agent 形态由标题栏左上角决定（4.0.0 阶段 0）；本页只消费它，不再自带开关。
   agent: AgentProfileId
+  sendKey: 'enter' | 'ctrl-enter'
+  chatFontSize: 'small' | 'standard' | 'large'
+  chatWrapLong: boolean
   onOpenLibrary: () => void
   onOpenModels: () => void
 }) {
@@ -639,7 +642,7 @@ export function ChatPage({ toast, agent, onOpenLibrary, onOpenModels }: {
   } as React.CSSProperties
 
   return (
-    <div className="chat-layout" style={layoutStyle}>
+    <div className={`chat-layout chat-font-${chatFontSize} ${chatWrapLong ? '' : 'chat-long-lines'}`} style={layoutStyle}>
       <aside className={`chat-col sessions-panel chat-panel ${sessionsCollapsed ? 'collapsed' : ''}`}>
         {sessionsCollapsed ? (
           <div className="sessions-collapsed">
@@ -834,7 +837,15 @@ export function ChatPage({ toast, agent, onOpenLibrary, onOpenModels }: {
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
+            onKeyDown={e => {
+              const wantsSend = sendKey === 'ctrl-enter'
+                ? (e.ctrlKey || e.metaKey)
+                : !e.ctrlKey && !e.metaKey
+              if (e.key === 'Enter' && !e.shiftKey && wantsSend) {
+                e.preventDefault()
+                void send()
+              }
+            }}
             placeholder={!hasModels ? '本机没有可用模型，请先去模型库下载…' : loaded.length === 0 && boundModel.length === 0 ? '先在「我的模型」启动一份模型，再回来发消息…' : (agentMode ? (planOnly ? '描述任务，先看再给计划（这一步不会改文件）' : (profile === 'office' ? '描述任务，例如：把工作目录里的笔记整理成一份周报' : '描述任务，例如：读一下工作目录，写一份 README')) : '输入消息，或打开任务模式让模型动手…')}
             aria-label="消息输入"
           />

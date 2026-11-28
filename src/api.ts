@@ -1,4 +1,4 @@
-import type { AgentMemoryClearResult, AgentMemoryInfo, AppSettings, AutostartState, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, GpuRuntimeActionResult, GpuRuntimeState, HardwareProfile, ModelDirectorySaveResult, ModelDirectoryState, ModelDeleteResult, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, StorageCleanupResult, StorageOverview, SessionBinding, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
+import type { AgentMemoryClearResult, AgentMemoryInfo, AppSettings, AutostartState, DiagnosticCleanupResult, DiagnosticLogStatus, DiagnosticTail, FontLibraryState, GoalResult, GoalSnapshot, Edge0Settings, Edge0State, Edge0Status, CatalogModel, ChatModels, DownloadJob, GpuRuntimeActionResult, GpuRuntimeState, HardwareProfile, ModelDirectorySaveResult, ModelDirectoryState, ModelDeleteResult, ModelSourceUpdate, ModelSourcesState, Recommendation, RuntimeOpResult, RuntimeState, StorageCleanupResult, StorageOverview, SessionBinding, SubTasksState, WorkspaceDiff, WebFetchResult, WorkspaceEntry, WorkspaceFile, WorkspaceInfo, WorkspaceChangeRow, StoredSession, StreamChunk, UpdateCheck, UpdateDownload, UpdateInstallPrep, UpdateInstallResult, UpdateOutcome, DeltaPrepareResult } from './types'
 
 export interface ApiConfig { baseUrl: string; token: string }
 
@@ -107,6 +107,36 @@ export const api = {
     request<ModelDirectorySaveResult>('/api/models/directory', { method: 'PUT', body: JSON.stringify({ path }) }),
   deleteModel: (fileName: string) =>
     request<ModelDeleteResult>(`/api/models/${encodeURIComponent(fileName)}`, { method: 'DELETE' }),
+  fonts: () => request<FontLibraryState>('/api/fonts'),
+  downloadFont: (id: string) => request<FontLibraryState>('/api/fonts/download', { method: 'POST', body: JSON.stringify({ id }) }),
+  deleteFont: (id: string) => request<FontLibraryState>(`/api/fonts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** 字体文件带 token 取成 Blob；前端用 FontFace 注册，避免把 token 拼进 CSS。 */
+  fontBlob: async (id: string): Promise<Blob> => {
+    const res = await fetch(`${config.baseUrl}/api/fonts/${encodeURIComponent(id)}/file`, {
+      headers: { 'X-Tianshu-Token': config.token },
+    })
+    if (!res.ok) throw new Error(await res.text().catch(() => '字体文件读不到'))
+    return res.blob()
+  },
+  uploadFont: async (file: File): Promise<FontLibraryState> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(config.baseUrl + '/api/fonts/upload', {
+      method: 'POST',
+      headers: { 'X-Tianshu-Token': config.token },
+      body: form,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      let detail = text
+      try {
+        const parsed = JSON.parse(text)
+        if (parsed && typeof parsed.error === 'string') detail = parsed.error
+      } catch { /* 非 JSON 错误体 */ }
+      throw new Error(detail || `${res.status} ${res.statusText}`)
+    }
+    return res.json() as Promise<FontLibraryState>
+  },
   settings: () => request<AppSettings>('/api/settings'),
   saveSettings: (settings: AppSettings) => request<AppSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   resetSettings: () => request<AppSettings>('/api/settings/reset', { method: 'POST' }),
@@ -114,8 +144,11 @@ export const api = {
   revealStorage: (kind: 'data' | 'logs' | 'models' | 'updates') =>
     request<{ ok: boolean }>('/api/storage/reveal', { method: 'POST', body: JSON.stringify({ kind }) }),
   cleanupLogs: () => request<StorageCleanupResult>('/api/storage/cleanup-logs', { method: 'POST' }),
+  diagnostics: () => request<DiagnosticLogStatus>('/api/diagnostics'),
+  diagnosticsTail: (lines = 200) => request<DiagnosticTail>(`/api/diagnostics/tail?lines=${lines}`),
+  cleanupDiagnostics: () => request<DiagnosticCleanupResult>('/api/diagnostics/cleanup', { method: 'POST' }),
   autostart: () => request<AutostartState>('/api/autostart'),
-  setAutostart: (enabled: boolean) => request<AutostartState>('/api/autostart', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  setAutostart: (enabled: boolean, startMinimized = false) => request<AutostartState>('/api/autostart', { method: 'PUT', body: JSON.stringify({ enabled, startMinimized }) }),
   edge0: () => request<Edge0State>('/api/edge0'),
   saveEdge0: (settings: Edge0Settings) => request<Edge0State>('/api/edge0', { method: 'PUT', body: JSON.stringify(settings) }),
   probeEdge0: () => request<Edge0Status>('/api/edge0/probe', { method: 'POST' }),

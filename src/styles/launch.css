@@ -29,6 +29,14 @@
   filter: blur(7px);
   pointer-events: none;
 }
+/* 快速模式只做短淡出：220ms 后组件就卸载，不能沿用完整模式的 0.5s / 0.62s 过渡。 */
+.launch.is-quick {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.launch.is-quick.is-leaving {
+  transform: none;
+  filter: none;
+}
 
 /* 星野：远层慢、近层快，同向漂移制造视差 */
 .launch-sky {

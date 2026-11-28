@@ -183,7 +183,51 @@ export interface AppSettings {
   inferenceGpuLayers: number
   /** 推理线程；0 表示按物理核自动。 */
   inferenceThreads: number
+  /** 启动页动画：full 完整 / quick 快速。 */
+  startupSplash: 'full' | 'quick'
+  /** 启动后打开哪一页。 */
+  startupPage: 'library' | 'chat' | 'last'
+  /** 对话发送键。 */
+  chatSendKey: 'enter' | 'ctrl-enter'
+  /** 对话正文与输入框字号。 */
+  chatFontSize: 'small' | 'standard' | 'large'
+  /** 对话阅读区字体：system / misans / catalog:id / custom:文件名。 */
+  chatFont: string
+  /** 长行自动换行；关闭后超长代码与日志横向滚动。 */
+  chatWrapLong: boolean
+  /** 默认 Agent 形态；last 表示沿用上次选择。 */
+  defaultAgentMode: 'last' | 'office' | 'code'
+  /** 诊断日志总开关；默认关闭，打开后应用日志与对话日志才落盘。 */
+  diagnosticLogEnabled: boolean
+  /** 诊断日志保留方式：按天数或按总量。 */
+  diagnosticLogMode: 'days' | 'size'
+  /** 按天数保留时保留的天数。 */
+  diagnosticLogDays: number
+  /** 按总量保留时保留的 MB 数。 */
+  diagnosticLogSizeMb: number
 }
+
+export interface DiagnosticLogStatus {
+  enabled: boolean
+  mode: 'days' | 'size'
+  retentionDays: number
+  retentionSizeMb: number
+  directory: string
+  appDirectory: string
+  chatDirectory: string
+  appBytes: number
+  appFiles: number
+  chatBytes: number
+  chatFiles: number
+  totalBytes: number
+  currentAppFile: string
+  currentChatFile: string
+  lastError: string
+  lastWriteAt?: string | null
+}
+
+export interface DiagnosticTail { text: string; status: DiagnosticLogStatus }
+export interface DiagnosticCleanupResult { removed: number; freedBytes: number; failed: string[] }
 
 export interface StorageOverview {
   dataRoot: string
@@ -202,6 +246,7 @@ export interface StorageCleanupResult { removed: number; freedBytes: number; fai
 export interface AutostartState {
   supported: boolean
   enabled: boolean
+  startMinimized: boolean
   appPath: string
   registeredPath: string
   error: string
@@ -460,3 +505,24 @@ export type AgentEvent =
   | { type: 'goal'; state: string; text: string; reason: string; ok: boolean }
   | { type: 'subtask'; runId: string; callId: string; taskId: string; label: string; phase: 'started' | 'ended'; status: string; detail?: string; ok?: boolean; ms?: number }
   | { type: 'error'; text: string; code?: string }
+
+export interface FontLibraryItem {
+  id: string
+  name: string
+  englishName: string
+  languages: string[]
+  styles: string[]
+  license: string
+  sizeBytes: number
+  sample: string
+  previewUrl: string
+  installed: boolean
+  source: 'catalog' | 'custom'
+  copyright: string
+}
+
+export interface FontLibraryState {
+  catalog: FontLibraryItem[]
+  custom: FontLibraryItem[]
+  totalBytes: number
+}

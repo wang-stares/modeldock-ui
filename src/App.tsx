@@ -14,13 +14,29 @@ import { DownloadsPage } from './pages/DownloadsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import type { AgentProfileId, AppSettings, DownloadJob, HardwareProfile, PageKey, UpdateCheck } from './types'
 
-const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true, agentNetwork: false, closeToTray: true, downloadConcurrency: 1, downloadLimitKbps: 0, notifyDownloadComplete: true, inferenceContext: 0, inferenceGpuLayers: -1, inferenceThreads: 0 }
+const defaultSettings: AppSettings = { theme: 'system', material: 'acrylic', accent: '#3482ff', backend: 'auto', autoCheckUpdate: true, autoDownloadUpdate: true, autoInstallOnQuit: true, updateChannel: 'stable', deltaUpdate: true, agentNetwork: false, closeToTray: true, downloadConcurrency: 1, downloadLimitKbps: 0, notifyDownloadComplete: true, inferenceContext: 0, inferenceGpuLayers: -1, inferenceThreads: 0, startupSplash: 'full', startupPage: 'library', chatSendKey: 'enter', chatFontSize: 'standard', chatFont: 'system', chatWrapLong: true, defaultAgentMode: 'last', diagnosticLogEnabled: false, diagnosticLogMode: 'days', diagnosticLogDays: 7, diagnosticLogSizeMb: 100 }
 
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem('stardock.ui')
     return raw ? { ...defaultSettings, ...JSON.parse(raw) } as AppSettings : defaultSettings
   } catch { return defaultSettings }
+}
+
+const pageKeys: PageKey[] = ['library', 'models', 'chat', 'downloads', 'settings']
+function isPageKey(value: string | null): value is PageKey {
+  return value !== null && pageKeys.includes(value as PageKey)
+}
+
+function resolveStartupPage(preference: AppSettings['startupPage']): PageKey {
+  if (preference === 'chat') return 'chat'
+  if (preference === 'last') {
+    try {
+      const last = localStorage.getItem('stardock.lastPage')
+      if (isPageKey(last)) return last
+    } catch { /* 隐私模式忽略 */ }
+  }
+  return 'library'
 }
 
 function effectiveTheme(theme: AppSettings['theme']): 'light' | 'dark' {
@@ -39,11 +55,15 @@ export function App() {
 
   const [page, setPage] = useState<PageKey>(() => {
     const value = new URLSearchParams(window.location.search).get('page')
-    return value === 'chat' || value === 'models' || value === 'downloads' || value === 'settings' ? value : 'library'
+    if (isPageKey(value)) return value
+    return resolveStartupPage(loadSettings().startupPage)
   })
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   // 当前 agent 形态放在 App：左上角切它，会话页与对话都跟着换（3.x 把它藏在会话页的输入框旁）。
   const [agent, setAgentState] = useState<AgentProfileId>(() => {
+    if (settings.defaultAgentMode === 'office' || settings.defaultAgentMode === 'code') {
+      return settings.defaultAgentMode
+    }
     try { return localStorage.getItem('stardock.agent') === 'office' ? 'office' : 'code' } catch { return 'code' }
   })
   const [hardware, setHardware] = useState<HardwareProfile | null>(null)
@@ -57,11 +77,40 @@ export function App() {
   const [splashDone, setSplashDone] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null)
+  const [settingsJump, setSettingsJump] = useState<{ section: 'update' | 'updates'; id: number } | null>(null)
   const toastTimer = useRef<number | null>(null)
   const previousJobs = useRef<DownloadJob[]>([])
+  const startupPageApplied = useRef(false)
+  const agentDefaultApplied = useRef(false)
+  const agentUserSelected = useRef(false)
+
+  useEffect(() => {
+    if (!ready || startupPageApplied.current) return
+    startupPageApplied.current = true
+    const queryPage = new URLSearchParams(window.location.search).get('page')
+    if (isPageKey(queryPage)) return
+    setPage(resolveStartupPage(settings.startupPage))
+  }, [ready, settings.startupPage])
+
+  // 固定形态只在启动时结算一次；设置页里改「默认 Agent」留给下一次启动。
+  useEffect(() => {
+    if (!ready || agentDefaultApplied.current) return
+    agentDefaultApplied.current = true
+    if (agentUserSelected.current) return
+    if (settings.defaultAgentMode === 'office' || settings.defaultAgentMode === 'code') {
+      setAgentState(settings.defaultAgentMode)
+    }
+  }, [ready, settings.defaultAgentMode])
+
+  // 只有用户主动换页才记「上次页面」；启动落点、后端回填与 ?page= 调试都不覆盖它。
+  function goPage(next: PageKey) {
+    setPage(next)
+    try { localStorage.setItem('stardock.lastPage', next) } catch { /* 隐私模式忽略 */ }
+  }
 
   function setAgent(next: AgentProfileId) {
     if (next === agent) return
+    agentUserSelected.current = true
     setAgentState(next)
     try { localStorage.setItem('stardock.agent', next) } catch { /* 隐私模式忽略 */ }
     toast(next === 'office' ? '已切到办公 agent：只读写工作区，不执行命令' : '已切到编程 agent：可按白名单执行命令，每次都要你点头')
@@ -123,7 +172,7 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === ',') {
         event.preventDefault()
-        setPage('settings')
+        goPage('settings')
         // 页面刚挂载时搜索框还不存在，等一拍再聚焦；已经在设置页时由设置页自己处理。
         window.setTimeout(() => document.querySelector<HTMLInputElement>('.settings-search')?.focus(), 80)
       }
@@ -169,6 +218,46 @@ export function App() {
       .catch(() => { /* browser preview */ })
     try { localStorage.setItem('stardock.ui', JSON.stringify(settings)) } catch { /* ignore */ }
   }, [settings])
+
+  // 对话阅读区字体：界面保持系统字体，只有 chat-layout 用 --chat-font。
+  // 目录字体和上传字体都先取成本地 Blob，再用 FontFace 注册，避免 token 进入 CSS。
+  useEffect(() => {
+    const root = document.documentElement
+    const fallback = '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif'
+    const misans = '"MiSans VF", "MiSans", "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif'
+    let cancelled = false
+    let face: FontFace | null = null
+    let objectUrl: string | null = null
+    const target = settings.chatFont === 'catalog:' || settings.chatFont === 'custom:'
+      ? ''
+      : settings.chatFont.startsWith('catalog:') ? settings.chatFont.slice('catalog:'.length)
+      : settings.chatFont.startsWith('custom:') ? settings.chatFont.slice('custom:'.length)
+      : ''
+    root.style.setProperty('--chat-font', settings.chatFont === 'misans' ? misans : fallback)
+
+    if (ready && target) {
+      void (async () => {
+        try {
+          const blob = await api.fontBlob(target)
+          if (cancelled) return
+          objectUrl = URL.createObjectURL(blob)
+          face = new FontFace('TianshuSelectedFont', `url("${objectUrl}")`)
+          await face.load()
+          if (cancelled) return
+          document.fonts.add(face)
+          root.style.setProperty('--chat-font', `"TianshuSelectedFont", ${misans}`)
+        } catch {
+          if (!cancelled) root.style.setProperty('--chat-font', fallback)
+        }
+      })()
+    }
+
+    return () => {
+      cancelled = true
+      if (face) document.fonts.delete(face)
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [ready, settings.chatFont])
 
   useEffect(() => {
     if (!ready) return
@@ -259,8 +348,8 @@ export function App() {
   const closeTour = useCallback((completed: boolean, next?: PageKey) => {
     setTourOpen(false)
     markOnboardingSeen()
-    if (next) setPage(next)
-    else if (completed) setPage('library')
+    if (next) goPage(next)
+    else if (completed) goPage('library')
   }, [])
 
   const snoozeUpdate = useCallback((check: UpdateCheck, hours: number) => {
@@ -277,7 +366,14 @@ export function App() {
 
   const openUpdateSettings = useCallback(() => {
     setUpdateCheck(null)
-    setPage('settings')
+    setSettingsJump({ section: 'update', id: Date.now() })
+    goPage('settings')
+  }, [])
+
+  const openReleaseNotes = useCallback(() => {
+    setUpdateCheck(null)
+    setSettingsJump({ section: 'updates', id: Date.now() })
+    goPage('settings')
   }, [])
 
   // 安装器拉不起来时的第三条路：不用现在装，退出应用时自动装（走壳层的退出即安装）。
@@ -293,13 +389,21 @@ export function App() {
   const running = useMemo(() => jobs.filter(job => job.state === 0).length, [jobs])
 
   const pageBody = page === 'chat'
-    ? <ChatPage toast={toast} agent={agent} onOpenLibrary={() => setPage('library')} onOpenModels={() => setPage('models')} />
+    ? <ChatPage
+        toast={toast}
+        agent={agent}
+        sendKey={settings.chatSendKey}
+        chatFontSize={settings.chatFontSize}
+        chatWrapLong={settings.chatWrapLong}
+        onOpenLibrary={() => goPage('library')}
+        onOpenModels={() => goPage('models')}
+      />
     : (
       <div className="page-scroll">
         {page === 'library' && <LibraryPage hardware={hardware} onHardware={() => { /* popover handled inside page */ }} jobs={jobs} toast={toast} />}
-        {page === 'models' && <ModelsPage toast={toast} onOpenChat={() => setPage('chat')} onOpenLibrary={() => setPage('library')} />}
-        {page === 'downloads' && <DownloadsPage jobs={jobs} refresh={() => void refreshDownloads()} toast={toast} onOpenLibrary={() => setPage('library')} />}
-        {page === 'settings' && <SettingsPage settings={settings} onChange={patch => setSettings(prev => ({ ...prev, ...patch }))} onReset={next => setSettings(next)} hardware={hardware} onReplayTour={replayTour} />}
+        {page === 'models' && <ModelsPage toast={toast} onOpenChat={() => goPage('chat')} onOpenLibrary={() => goPage('library')} />}
+        {page === 'downloads' && <DownloadsPage jobs={jobs} refresh={() => void refreshDownloads()} toast={toast} onOpenLibrary={() => goPage('library')} />}
+        {page === 'settings' && <SettingsPage settings={settings} onChange={patch => setSettings(prev => ({ ...prev, ...patch }))} onReset={next => setSettings(next)} hardware={hardware} onReplayTour={replayTour} jumpTo={settingsJump} onJumpHandled={() => setSettingsJump(null)} />}
       </div>
     )
 
@@ -309,7 +413,7 @@ export function App() {
       <TitleBar page={page} agent={agent} onAgent={setAgent} />
       {ready && (
         <div className={`workspace ${railCollapsed ? 'rail-collapsed' : ''}`}>
-          <Rail page={page} onNavigate={setPage} runningDownloads={running} backend={backend} onTour={replayTour}
+          <Rail page={page} onNavigate={goPage} runningDownloads={running} backend={backend} onTour={replayTour}
             collapsed={railCollapsed} onToggle={() => setRailCollapsed(v => !v)} />
           <main className="main">
             <div className="page-stage" key={page}>{pageBody}</div>
@@ -320,6 +424,7 @@ export function App() {
         <SplashScreen
           phase={launchPhase}
           error={bootError}
+          quick={settings.startupSplash === 'quick'}
           onRetry={retryBoot}
           onDone={finishSplash}
         />
@@ -329,6 +434,7 @@ export function App() {
           check={updateCheck}
           onDismiss={() => dismissUpdate(updateCheck)}
           onOpenSettings={openUpdateSettings}
+          onOpenReleaseNotes={openReleaseNotes}
           onMessage={toast}
           onSnooze={(hours) => snoozeUpdate(updateCheck, hours)}
           onEnableQuitInstall={enableQuitInstall}
@@ -337,7 +443,7 @@ export function App() {
         />
       )}
       {ready && splashDone && tourOpen && (
-        <Onboarding jobs={jobs} onNavigate={setPage} onClose={closeTour} />
+        <Onboarding jobs={jobs} onNavigate={goPage} onClose={closeTour} />
       )}
       {toastText && <div className="toast">{toastText}</div>}
     </div>

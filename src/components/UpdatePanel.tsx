@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, ExternalLink, FolderOpen, RefreshCw, X } from 'lucide-react'
+import { Check, Copy, Download, ExternalLink, FolderOpen, Megaphone, RefreshCw, X } from 'lucide-react'
 import { api, installUpdate } from '../api'
 import type { UpdateCheck, UpdateDownload } from '../types'
 
@@ -9,8 +9,8 @@ export function formatBytes(bytes: number) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`
 }
 
-/** 客户端下不动时的兜底：只打开公开仓库的 Release 页面，用户用自己的浏览器/下载器拿安装包。 */
-function openReleasePage(url: string) {
+/** 客户端下不动时的兜底：交给系统浏览器打开给定地址。 */
+function openExternalUrl(url: string) {
   if (!url) return
   void import('@tauri-apps/api/core')
     .then(({ invoke }) => invoke('open_url', { url }))
@@ -44,6 +44,17 @@ export function formatReleaseDate(value: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+/** Tauri 的 invoke 失败时常常 reject 一个字符串，而不是 Error；直接判断 instanceof 会把真实原因吞成兜底文案。 */
+function readableError(error: unknown, fallback: string) {
+  if (typeof error === 'string' && error.trim()) return error
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  return fallback
+}
+
 /**
  * 安装包下载与安装的共享状态：横幅和设置页共用同一套轮询，避免两处同时下载。
  * 3.9.0 起「安装」不再是打开安装向导，而是交给桌面壳退出并覆盖安装。
@@ -59,8 +70,9 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
   /** 安装这一步本身失败（UAC 被拒、安装器没起来、脚本报错）：给三条出路，而不是只弹一个 toast。 */
   const [installError, setInstallError] = useState('')
 
-  // 重新下载或换了一个版本后，上一次的拒绝理由就过期了。
-  useEffect(() => { setBlocked(null); setPortableBlocked(false); setInstallError('') }, [download?.version, download?.state])
+  // 换了一个版本后，上一次的拒绝理由就过期了；下载状态变化不清安装失败原因，
+  // 否则「无法启动升级」的详情会在下一次轮询时被抹掉，只剩一个短暂 toast。
+  useEffect(() => { setBlocked(null); setPortableBlocked(false); setInstallError('') }, [download?.version])
 
   useEffect(() => {
     let alive = true
@@ -84,7 +96,7 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     try {
       setDownload(await api.startUpdateDownload())
     } catch (e) {
-      onMessage?.(e instanceof Error ? e.message : '安装包下载失败')
+      onMessage?.(readableError(e, '安装包下载失败'))
     } finally { setBusy(false) }
   }
 
@@ -99,6 +111,7 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     setBusy(true)
     setBlocked(null)
     setPortableBlocked(false)
+    setInstallError('')
     try {
       // 已经下好整包（文件名是 .exe）就别再回头拉增量：走增量的那一步要联网，
       // 网络一卡，“确认重启”就会长时间毫无反应。整包既然已经过了 SHA256，直接拿它装。
@@ -107,8 +120,15 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
         const delta = await api.prepareUpdateDelta().catch(() => null)
         if (delta?.ok) {
           setInstalling(true)
-          await api.applyUpdateDelta(delta.planPath, delta.version)
-          return
+          try {
+            await api.applyUpdateDelta(delta.planPath, delta.version)
+            return
+          } catch (deltaError) {
+            // 增量没起来不能把用户卡死在原地：先退回完整安装包再试一次。
+            // 老客户端（beta.2/beta.3）没有这层兜底，只能手动装；beta.4 起生效。
+            setInstalling(false)
+            onMessage?.(`${readableError(deltaError, '增量升级没有启动')}，正在改用完整安装包…`)
+          }
         }
       }
       const prep = await api.updateInstallPrep()
@@ -121,8 +141,15 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
           const delta = await api.prepareUpdateDelta().catch(() => null)
           if (delta?.ok) {
             setInstalling(true)
-            await api.applyUpdateDelta(delta.planPath, delta.version)
-            return
+            try {
+              await api.applyUpdateDelta(delta.planPath, delta.version)
+              return
+            } catch (deltaError) {
+              setInstalling(false)
+              setPortableBlocked(true)
+              setBlocked(portableMessage(prep.error, readableError(deltaError, '增量升级没有启动'), download?.version ?? prep.version))
+              return
+            }
           }
           setPortableBlocked(true)
           setBlocked(portableMessage(prep.error, delta?.error, download?.version ?? prep.version))
@@ -135,7 +162,7 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
       await installUpdate(prep.installerPath, prep.expectedSha, prep.version)
     } catch (e) {
       setInstalling(false)
-      const message = e instanceof Error ? e.message : '无法启动升级'
+      const message = readableError(e, '无法启动升级')
       // 失败要留在界面上：这三条出路（重试 / 打开文件夹 / 退出时自动装）比一个会消失的 toast 更有用。
       setInstallError(message)
       onMessage?.(message)
@@ -146,7 +173,7 @@ export function useUpdateDownload(onMessage?: (text: string) => void) {
     try {
       await api.revealUpdate()
     } catch (e) {
-      onMessage?.(e instanceof Error ? e.message : '无法打开下载目录')
+      onMessage?.(readableError(e, '无法打开下载目录'))
     }
   }
 
@@ -211,10 +238,11 @@ function InstallConfirm({ busy, onConfirm, onCancel }: {
 }
 
 /** 启动时检测到新版本后的轻提示：进度、暂停/继续、重启升级都在横幅里完成，细节进设置页。 */
-export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, onSnooze, onEnableQuitInstall, autoInstallOnQuit = true, forced = false }: {
+export function UpdateBanner({ check, onDismiss, onOpenSettings, onOpenReleaseNotes, onMessage, onSnooze, onEnableQuitInstall, autoInstallOnQuit = true, forced = false }: {
   check: UpdateCheck
   onDismiss: () => void
   onOpenSettings: () => void
+  onOpenReleaseNotes?: () => void
   onMessage?: (text: string) => void
   onSnooze?: (hours: number) => void
   onEnableQuitInstall?: () => void
@@ -232,6 +260,20 @@ export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, onSn
     ? `${download.sourceHost}${download.sourceCount && download.sourceCount > 1 ? `（第 ${download.sourceIndex}/${download.sourceCount} 个源）` : ''}`
     : ''
   const connecting = download?.state === 'downloading' && download?.stage === 'connect'
+
+  async function copyDownloadLink() {
+    const url = check.asset?.url
+    if (!url) {
+      onMessage?.('没有可复制的安装包直链，请用「在 GitHub 查看」')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      onMessage?.('下载直链已复制')
+    } catch {
+      onMessage?.('复制失败，请用「用浏览器下载」')
+    }
+  }
 
   if (installing) {
     return (
@@ -361,12 +403,22 @@ export function UpdateBanner({ check, onDismiss, onOpenSettings, onMessage, onSn
               {downloading && (
                 <button type="button" className="btn ghost sm" onClick={() => void pause()}>暂停</button>
               )}
-              {download?.state === 'failed' && check.releaseUrl && (
-                <button type="button" className="btn ghost sm" onClick={() => openReleasePage(check.releaseUrl)}>
-                  <ExternalLink aria-hidden />用浏览器下载
-                </button>
+              {download?.state === 'failed' && (
+                <>
+                  <button type="button" className="btn ghost sm" onClick={() => openExternalUrl(check.asset?.url || check.releaseUrl)}>
+                    <ExternalLink aria-hidden />用浏览器下载
+                  </button>
+                  <button type="button" className="btn ghost sm" onClick={() => void copyDownloadLink()}>
+                    <Copy aria-hidden />复制直链
+                  </button>
+                </>
               )}
             </>
+          )}
+          {onOpenReleaseNotes && (
+            <button type="button" className="btn ghost sm" onClick={onOpenReleaseNotes}>
+              <Megaphone aria-hidden />更新公告
+            </button>
           )}
           <button type="button" className="btn ghost sm" onClick={onOpenSettings}>
             <ExternalLink aria-hidden />详情

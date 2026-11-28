@@ -24,6 +24,9 @@ const INTRO_MS = 2100
 const MIN_VISIBLE_MS = 3000
 const READY_HOLD_MS = 600
 const EXIT_MS = 640
+const QUICK_MIN_VISIBLE_MS = 800
+const QUICK_READY_HOLD_MS = 120
+const QUICK_EXIT_MS = 220
 
 const STAGES: Record<LaunchPhase, { percent: number; label: string; note: string }> = {
   connect: {
@@ -59,9 +62,10 @@ const SPARKS: Array<{ x: string; y: string; delay: number }> = [
   { x: '20vw', y: '44vh', delay: 780 },
 ]
 
-export function SplashScreen({ phase, error, onRetry, onDone }: {
+export function SplashScreen({ phase, error, quick = false, onRetry, onDone }: {
   phase: LaunchPhase
   error: string
+  quick?: boolean
   onRetry: () => void
   onDone: () => void
 }) {
@@ -71,23 +75,29 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
   const [closing, setClosing] = useState(false)
   const finished = useRef(false)
   const retryRef = useRef<HTMLButtonElement>(null)
+  const settled = skipped || quick
 
   useEffect(() => {
+    if (quick) {
+      setIntroDone(true)
+      const gate = window.setTimeout(() => setMinElapsed(true), QUICK_MIN_VISIBLE_MS)
+      return () => window.clearTimeout(gate)
+    }
     const intro = window.setTimeout(() => setIntroDone(true), INTRO_MS)
     const gate = window.setTimeout(() => setMinElapsed(true), MIN_VISIBLE_MS)
     return () => {
       window.clearTimeout(intro)
       window.clearTimeout(gate)
     }
-  }, [])
+  }, [quick])
 
   useEffect(() => {
     if (phase !== 'ready') return
-    if (!skipped && (!introDone || !minElapsed)) return
-    const delay = skipped ? 120 : READY_HOLD_MS
+    if (!introDone || !minElapsed) return
+    const delay = settled ? (quick ? QUICK_READY_HOLD_MS : skipped ? 120 : READY_HOLD_MS) : READY_HOLD_MS
     const timer = window.setTimeout(() => setClosing(true), delay)
     return () => window.clearTimeout(timer)
-  }, [phase, introDone, minElapsed, skipped])
+  }, [phase, introDone, minElapsed, skipped, quick, settled])
 
   useEffect(() => {
     if (!closing) return
@@ -95,9 +105,9 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
       if (finished.current) return
       finished.current = true
       onDone()
-    }, EXIT_MS)
+    }, quick ? QUICK_EXIT_MS : EXIT_MS)
     return () => window.clearTimeout(timer)
-  }, [closing, onDone])
+  }, [closing, onDone, quick])
 
   const skip = useCallback(() => {
     setSkipped(true)
@@ -132,7 +142,7 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
 
   return (
     <section
-      className={`launch ${skipped ? 'is-settled' : ''} ${closing ? 'is-leaving' : ''}`}
+      className={`launch ${settled ? 'is-settled' : ''} ${quick ? 'is-quick' : ''} ${closing ? 'is-leaving' : ''}`}
       data-phase={phase}
       aria-label={isError ? '本机内核没有响应' : '天枢正在启动'}
       aria-busy={phase !== 'ready' && !isError}
@@ -206,7 +216,7 @@ export function SplashScreen({ phase, error, onRetry, onDone }: {
           </div>
         )}
 
-        {!isError && !closing && (
+        {!isError && !closing && !quick && (
           <button className="launch-skip" onClick={skip}>
             跳过启动动画 <kbd>Esc</kbd>
           </button>
